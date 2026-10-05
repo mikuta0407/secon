@@ -17,7 +17,8 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: Test
-        run: go test ./...
+        # secon-gui は cgo と GUI ライブラリが必要なので build-gui-* ジョブで確認する
+        run: go test $(go list ./... | grep -v /cmd/secon-gui)
       - name: Vet (CLI, linux / darwin)
         run: |
           go vet ./internal/... ./cmd/secon
