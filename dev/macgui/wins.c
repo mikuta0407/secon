@@ -1,4 +1,4 @@
-// 指定プロセス名のウィンドウ一覧 (位置・サイズ・画面上か) を出す
+// 指定プロセス名のウィンドウ一覧 (ID・位置・サイズ・画面上か) を出す。ID は screencapture -l に渡せる
 #include <ApplicationServices/ApplicationServices.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,8 +13,10 @@ int main(int argc, char **argv) {
     if (argc > 1 && !strstr(owner, argv[1])) continue;
     CGRect r; CGRectMakeWithDictionaryRepresentation(CFDictionaryGetValue(d, kCGWindowBounds), &r);
     CFBooleanRef on = CFDictionaryGetValue(d, kCGWindowIsOnscreen);
-    int layer = 0; CFNumberGetValue(CFDictionaryGetValue(d, kCGWindowLayer), kCFNumberIntType, &layer);
-    printf("%s | %s | %.0f,%.0f %.0fx%.0f | onscreen=%d layer=%d\n", owner, name, r.origin.x, r.origin.y, r.size.width, r.size.height, on == kCFBooleanTrue, layer);
+    int layer = 0, id = 0;
+    CFNumberGetValue(CFDictionaryGetValue(d, kCGWindowLayer), kCFNumberIntType, &layer);
+    CFNumberGetValue(CFDictionaryGetValue(d, kCGWindowNumber), kCFNumberIntType, &id);
+    printf("%d | %s | %s | %.0f,%.0f %.0fx%.0f | onscreen=%d layer=%d\n", id, owner, name, r.origin.x, r.origin.y, r.size.width, r.size.height, on == kCFBooleanTrue, layer);
   }
   return 0;
 }

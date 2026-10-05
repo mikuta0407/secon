@@ -1,0 +1,26 @@
+secon
+Copyright 2026 mikuta0407
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+SoftEther VPN protocol compatibility
+------------------------------------
+secon is an independent, compatible implementation of the SoftEther VPN client
+protocol. It does not contain source code from SoftEther VPN. The protocol was
+implemented by studying the SoftEther VPN source code
+(https://github.com/SoftEtherVPN/SoftEtherVPN, Apache License 2.0);
+docs/PROTOCOL.md summarizes that protocol and cites the relevant source files.
+
+secon is not affiliated with, endorsed by, or sponsored by the SoftEther VPN
+Project, SoftEther Corporation, or the University of Tsukuba.
+"SoftEther" is used only to describe protocol compatibility.
+
+Third-party components
+----------------------
+secon depends on third-party Go modules under their own licenses, including:
+  - gVisor (Apache-2.0)
+  - Fyne (BSD-3-Clause)
+  - github.com/insomniacslk/dhcp (BSD-3-Clause)
+  - github.com/vishvananda/netlink (Apache-2.0)
+  - github.com/BurntSushi/toml (MIT)
+See go.mod for the complete list.

@@ -1,8 +1,9 @@
-# Homebrew formula (tap リポジトリ mikuta0407/homebrew-secon の Formula/secon.rb に置く想定)。
+# Homebrew formula (tap リポジトリ mikuta0407/homebrew-apps の Formula/secon.rb に置く想定)。
 # リリース時に url / sha256 を更新する。
 class Secon < Formula
   desc "SoftEther VPN compatible client with virtual NIC and SOCKS5 modes"
   homepage "https://github.com/mikuta0407/secon"
+  license "Apache-2.0"
   url "https://github.com/mikuta0407/secon/archive/refs/tags/v0.1.0.tar.gz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   head "https://github.com/mikuta0407/secon.git", branch: "main"

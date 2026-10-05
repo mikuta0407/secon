@@ -69,10 +69,10 @@ func NewManager() *Manager {
 // Apply は設定を反映する。変更・削除されたプロファイルは切断し、auto_connect のものは接続する。
 func (m *Manager) Apply(cfg *config.Config) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	next := map[string]*runner{}
 	var order []string
+	var stopping []*runner
+	var starting []*runner
 	for _, p := range cfg.Profiles {
 		order = append(order, p.Name)
 		if r, ok := m.profiles[p.Name]; ok && reflect.DeepEqual(r.profile, p) {
@@ -80,21 +80,33 @@ func (m *Manager) Apply(cfg *config.Config) {
 			continue
 		}
 		if r, ok := m.profiles[p.Name]; ok {
-			r.stop()
+			stopping = append(stopping, r)
 		}
 		r := newRunner(p, m)
 		next[p.Name] = r
 		if p.AutoConnect {
-			r.start()
+			starting = append(starting, r)
 		}
 	}
 	for name, r := range m.profiles {
 		if _, ok := next[name]; !ok {
-			r.stop()
+			stopping = append(stopping, r)
 		}
 	}
 	m.profiles, m.order = next, order
 	m.changed()
+	m.mu.Unlock()
+
+	// 停止中の runner は状態通知のため m.mu を取るので、ロックの外で待つ
+	var wg sync.WaitGroup
+	for _, r := range stopping {
+		wg.Add(1)
+		go func() { defer wg.Done(); r.stop() }()
+	}
+	wg.Wait()
+	for _, r := range starting {
+		r.start()
+	}
 }
 
 func (m *Manager) get(name string) (*runner, error) {
