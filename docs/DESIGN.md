@@ -146,9 +146,11 @@ secon debug dump|socks         # 開発用: デーモンを介さず直接接続
 - Linux: `/etc/systemd/system/secon.service` / `--user` で `systemctl --user` 版
 
 ### GUI
-- **Fyne** を採用 (`desktop.App.SetSystemTrayMenu` でトレイ、設定画面も同じツールキットで書ける)
-- メニュー: プロファイルごとに 接続/切断、状態表示、「設定…」
-- 代替案: トレイだけ `fyne.io/systray`、設定画面はデーモンが出すローカル Web UI
+- **Fyne** を採用 (`desktop.App.SetSystemTrayMenu` でトレイ、設定画面も同じツールキット)
+- メニュー: プロファイルごとに 接続/切断、状態表示、「設定…」。状態は SSE (`/v1/events`) で即時反映
+- 設定画面はデーモンの `/v1/config/profiles` で読み書き (デーモンが設定ファイルを書き換えて反映。コメントは消える)
+- Linux のトレイは StatusNotifierItem 対応のパネルが必要 (GNOME は AppIndicator 拡張)
+- 注意: Fyne は OpenGL が必要なため macOS VM (Virtualization.framework) では起動しない
 
 ---
 
@@ -189,6 +191,7 @@ target = "10.20.0.5:3389"
 
 ```
 cmd/secon/       CLI + デーモン (+ 開発用 debug コマンド)
+cmd/secon-gui/   トレイ GUI (Fyne)。状態表示・接続/切断・プロファイル編集 (API 経由)
 internal/
   proto/         PACK, Hello/Auth, データチャネル, KeepAlive, SHA-0   (仕様: docs/PROTOCOL.md)
   transport/     TCP / HTTP CONNECT / TLS (証明書ピン留め)
@@ -199,6 +202,7 @@ internal/
   engine/        プロファイルごとの接続ループ・再接続・リスナ、モード (socks / nic)
   api/           Unix socket 上の HTTP+JSON (サーバ / クライアント, SSE)
   config/  service/
+packaging/       Homebrew formula
 dev/             開発用 VM 環境とテストスクリプト (dev/README.md)
 ```
 

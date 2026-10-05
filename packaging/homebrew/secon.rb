@@ -10,11 +10,11 @@ class Secon < Formula
   depends_on "go" => :build
 
   def install
-    ldflags = "-s -w -X main.version=#{version}"
+    ldflags = "-X main.version=#{version}"
     system "go", "build", *std_go_args(ldflags:), "./cmd/secon"
     # GUI は cgo (Cocoa / OpenGL) が必要。Linux では X11 等の開発ライブラリが要るので macOS のみ
     if OS.mac?
-      system "go", "build", *std_go_args(ldflags: "-s -w", output: bin/"secon-gui"), "./cmd/secon-gui"
+      system "go", "build", *std_go_args(output: bin/"secon-gui"), "./cmd/secon-gui"
     end
   end
 
