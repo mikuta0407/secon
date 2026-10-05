@@ -148,14 +148,18 @@ jobs:
             homepage "https://github.com/${repo}"
 
             depends_on arch: :arm64
-            depends_on macos: ">= :monterey"
+            depends_on macos: :monterey
 
             app "secon.app"
             binary "#{appdir}/secon.app/Contents/MacOS/secon"
 
             # 公証していない (ad-hoc 署名) ので、Gatekeeper の quarantine 属性を外す
-            postflight do
-              system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{appdir}/secon.app"]
+            postflight_steps do
+              run "/usr/bin/xattr",
+                  args:           ["-dr", "com.apple.quarantine", "{{appdir}}/secon.app"],
+                  writable_paths: ["secon.app"],
+                  writable_base:  :appdir,
+                  must_succeed:   false
             end
 
             uninstall quit: "io.github.mikuta0407.secon"
