@@ -27,6 +27,7 @@ source dev/vm/env.sh         # mac_ssh / mac_scp / lima_ip などのヘルパー
 | `dev/test/daemon-nic.sh` | Linux NIC モード (sudo)。第 3 引数 `true` でデフォルト GW 化も |
 | `dev/test/daemon-nic-mac.sh` | macOS NIC モード (sudo)。同上 |
 | `dev/test/service.sh` | systemd / launchd 登録と一般ユーザからの操作 |
+| `dev/test/static.sh` | 固定アドレス (DHCP なし) を NIC / SOCKS 両モードで (sudo) |
 | `dev/test/gui-linux.sh` | Xvfb 上で GUI を起動し、xdotool でプロファイル追加→スクリーンショット (要: client-linux で GUI をビルド) |
 | `dev/vm/official-client-check.sh` | 公式クライアントでサーバ環境自体を確認 |
 

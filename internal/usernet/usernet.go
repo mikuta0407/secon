@@ -49,6 +49,8 @@ type Config struct {
 	MAC      net.HardwareAddr
 	Hostname string // DHCP で送るホスト名
 	Logf     func(format string, args ...any)
+	// Static が nil でなければ DHCP を使わずにこのアドレスを使う
+	Static *l2.Lease
 }
 
 // Net は VPN 上のユーザ空間ネットワーク。
@@ -95,6 +97,15 @@ func Start(ctx context.Context, conn FrameConn, cfg Config) (*Net, error) {
 	go n.rxLoop()
 	go n.txLoop()
 
+	n.resolver = &net.Resolver{PreferGo: true, Dial: n.dialDNS}
+	if cfg.Static != nil {
+		if err := n.apply(cfg.Static); err != nil {
+			n.Close()
+			return nil, err
+		}
+		return n, nil
+	}
+
 	actx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	lease, err := n.dhcp.Acquire(actx)
@@ -106,7 +117,6 @@ func Start(ctx context.Context, conn FrameConn, cfg Config) (*Net, error) {
 		n.Close()
 		return nil, err
 	}
-	n.resolver = &net.Resolver{PreferGo: true, Dial: n.dialDNS}
 
 	n.wg.Add(1)
 	go n.renewLoop()
@@ -220,7 +230,11 @@ func (n *Net) apply(l *l2.Lease) error {
 		routes = append(routes, tcpip.Route{Destination: header.IPv4EmptySubnet, Gateway: tcpip.AddrFrom4(l.Router.As4()), NIC: nicID})
 	}
 	n.st.SetRouteTable(routes)
-	n.cfg.Logf("dhcp: address %s router %s dns %v lease %s", l.IP, l.Router, l.DNS, l.LeaseTime)
+	if n.cfg.Static != nil {
+		n.cfg.Logf("static: address %s router %s dns %v", l.IP, l.Router, l.DNS)
+	} else {
+		n.cfg.Logf("dhcp: address %s router %s dns %v lease %s", l.IP, l.Router, l.DNS, l.LeaseTime)
+	}
 	return nil
 }
 
@@ -249,7 +263,7 @@ func (n *Net) fail(err error) {
 
 // Close は DHCP リースを返却して停止する。
 func (n *Net) Close() error {
-	if l := n.lease.Load(); l != nil && n.ctx.Err() == nil {
+	if l := n.lease.Load(); l != nil && n.ctx.Err() == nil && n.cfg.Static == nil {
 		n.dhcp.Release(l)
 	}
 	n.cancel()

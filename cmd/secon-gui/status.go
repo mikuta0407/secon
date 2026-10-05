@@ -11,15 +11,18 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/mikuta0407/secon/internal/engine"
+	"github.com/mikuta0407/secon/internal/i18n"
 )
 
-var stateLabel = map[engine.State]string{
-	engine.StateDisconnected: "切断",
-	engine.StateConnecting:   "接続中…",
-	engine.StateConnected:    "接続済み",
-	engine.StateReconnecting: "再接続中…",
-	engine.StateFailed:       "エラー",
+var stateKey = map[engine.State]string{
+	engine.StateDisconnected: "state.disconnected",
+	engine.StateConnecting:   "state.connecting",
+	engine.StateConnected:    "state.connected",
+	engine.StateReconnecting: "state.reconnecting",
+	engine.StateFailed:       "state.failed",
 }
+
+func stateLabel(s engine.State) string { return i18n.T(stateKey[s]) }
 
 var stateMark = map[engine.State]string{
 	engine.StateDisconnected: "○",
@@ -29,7 +32,7 @@ var stateMark = map[engine.State]string{
 	engine.StateFailed:       "✕",
 }
 
-func stateText(s engine.State) string { return stateMark[s] + " " + stateLabel[s] }
+func stateText(s engine.State) string { return stateMark[s] + " " + stateLabel(s) }
 
 // isActive は接続を試みている (切断操作の対象になる) 状態か。
 func isActive(s engine.State) bool {
@@ -75,34 +78,33 @@ func dash(s string) string {
 
 // detailRows は状態の詳細を (項目, 値) の組で返す。
 func detailRows(s engine.Status) [][2]string {
-	rows := [][2]string{
-		{"状態", stateText(s.State)},
-		{"接続先", s.Server},
-		{"仮想 HUB / ユーザ", s.Hub + " / " + s.User},
-		{"モード", s.Mode},
-	}
-	add := func(k, v string) {
+	var rows [][2]string
+	add := func(key, v string) {
 		if v != "" {
-			rows = append(rows, [2]string{k, v})
+			rows = append(rows, [2]string{i18n.T(key), v})
 		}
 	}
-	add("エラー", s.Error)
-	add("IP アドレス", s.Address)
-	add("ゲートウェイ", s.Gateway)
-	add("DNS", strings.Join(s.DNS, ", "))
-	add("仮想 NIC", s.Interface)
-	add("SOCKS5", s.Socks)
+	add("detail.state", stateText(s.State))
+	add("detail.server", s.Server)
+	add("detail.hubUser", s.Hub+" / "+s.User)
+	add("detail.mode", s.Mode)
+	add("detail.error", s.Error)
+	add("detail.address", s.Address)
+	add("detail.gateway", s.Gateway)
+	add("detail.dns", strings.Join(s.DNS, ", "))
+	add("detail.interface", s.Interface)
+	add("detail.socks", s.Socks)
 	for _, f := range s.Forwards {
-		add("ポート転送", f)
+		add("detail.forward", f)
 	}
-	add("セッション", s.Session)
-	add("サーバ", s.ServerInfo)
+	add("detail.session", s.Session)
+	add("detail.serverInfo", s.ServerInfo)
 	if s.State == engine.StateConnected {
-		add("接続時間", uptime(s))
-		add("受信", fmt.Sprintf("%s (%d パケット)", formatBytes(s.BytesIn), s.PacketsIn))
-		add("送信", fmt.Sprintf("%s (%d パケット)", formatBytes(s.BytesOut), s.PacketsOut))
+		add("detail.uptime", uptime(s))
+		add("detail.received", i18n.T("detail.traffic", formatBytes(s.BytesIn), s.PacketsIn))
+		add("detail.sent", i18n.T("detail.traffic", formatBytes(s.BytesOut), s.PacketsOut))
 	} else if s.State != engine.StateDisconnected {
-		add("経過", formatDuration(time.Since(s.Since)))
+		add("detail.elapsed", formatDuration(time.Since(s.Since)))
 	}
 	return rows
 }
@@ -118,7 +120,7 @@ func newDetailsView() *detailsView {
 
 func (d *detailsView) update(s *engine.Status) {
 	if s == nil {
-		d.box.Objects = []fyne.CanvasObject{widget.NewLabel("プロファイルを選択してください")}
+		d.box.Objects = []fyne.CanvasObject{widget.NewLabel(i18n.T("detail.selectProfile"))}
 		d.box.Refresh()
 		return
 	}

@@ -20,6 +20,7 @@ import (
 
 	"github.com/mikuta0407/secon/internal/config"
 	"github.com/mikuta0407/secon/internal/engine"
+	"github.com/mikuta0407/secon/internal/i18n"
 )
 
 // Client は制御 API のクライアント。
@@ -93,17 +94,17 @@ func (c *Client) Reload(ctx context.Context) error {
 func (c *Client) dialError(err error) error {
 	switch {
 	case errors.Is(err, fs.ErrPermission):
-		hint := "add your user to the socket's group"
+		group := "?"
 		if fi, serr := os.Stat(c.Socket); serr == nil {
 			if st, ok := fi.Sys().(*syscall.Stat_t); ok {
 				if g, gerr := user.LookupGroupId(strconv.Itoa(int(st.Gid))); gerr == nil {
-					hint = fmt.Sprintf("add your user to group %q (or set api.group in the config)", g.Name)
+					group = g.Name
 				}
 			}
 		}
-		return fmt.Errorf("permission denied on %s: %s", c.Socket, hint)
+		return i18n.Errorf("cli.permission", c.Socket, group)
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ECONNREFUSED):
-		return fmt.Errorf("daemon is not running (%s); start it with 'secon service install'", c.Socket)
+		return i18n.Errorf("cli.daemonNotFound", c.Socket)
 	}
 	return fmt.Errorf("cannot reach daemon (%s): %w", c.Socket, err)
 }

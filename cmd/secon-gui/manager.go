@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -12,9 +12,10 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/mikuta0407/secon/internal/engine"
+	"github.com/mikuta0407/secon/internal/i18n"
 )
 
-// managerWindow は SoftEther VPN Client マネージャ風の接続一覧。
+// managerWindow は SoftEther VPN Client マネージャ風の接続一覧 (メイン画面)。
 type managerWindow struct {
 	g       *gui
 	w       fyne.Window
@@ -31,19 +32,19 @@ type managerWindow struct {
 }
 
 var managerColumns = []struct {
-	title string
+	key   string
 	width float32
 	value func(s engine.Status) string
 }{
-	{"接続設定名", 120, func(s engine.Status) string { return s.Name }},
-	{"状態", 100, func(s engine.Status) string { return stateText(s.State) }},
-	{"モード", 60, func(s engine.Status) string { return s.Mode }},
-	{"接続先サーバ", 150, func(s engine.Status) string { return s.Server }},
-	{"仮想 HUB", 75, func(s engine.Status) string { return s.Hub }},
-	{"IP アドレス", 120, func(s engine.Status) string { return dash(s.Address) }},
-	{"受信", 80, func(s engine.Status) string { return bytesOrDash(s, s.BytesIn) }},
-	{"送信", 80, func(s engine.Status) string { return bytesOrDash(s, s.BytesOut) }},
-	{"接続時間", 80, func(s engine.Status) string { return dash(uptime(s)) }},
+	{"col.name", 120, func(s engine.Status) string { return s.Name }},
+	{"col.state", 110, func(s engine.Status) string { return stateText(s.State) }},
+	{"col.mode", 60, func(s engine.Status) string { return s.Mode }},
+	{"col.server", 150, func(s engine.Status) string { return s.Server }},
+	{"col.hub", 75, func(s engine.Status) string { return s.Hub }},
+	{"col.address", 120, func(s engine.Status) string { return dash(s.Address) }},
+	{"col.received", 80, func(s engine.Status) string { return bytesOrDash(s, s.BytesIn) }},
+	{"col.sent", 80, func(s engine.Status) string { return bytesOrDash(s, s.BytesOut) }},
+	{"col.uptime", 80, func(s engine.Status) string { return dash(uptime(s)) }},
 }
 
 func bytesOrDash(s engine.Status, n uint64) string {
@@ -55,9 +56,16 @@ func bytesOrDash(s engine.Status, n uint64) string {
 
 func newManagerWindow(g *gui) *managerWindow {
 	m := &managerWindow{g: g}
-	m.w = g.app.NewWindow("secon 接続マネージャ")
+	m.w = g.app.NewWindow("")
 	m.w.SetCloseIntercept(func() { m.visible = false; m.w.Hide() })
+	m.build()
+	m.w.Resize(fyne.NewSize(900, 560))
+	return m
+}
 
+// build はウィンドウの中身を現在の言語で作る (言語切り替え時にも呼ぶ)。
+func (m *managerWindow) build() {
+	m.w.SetTitle(i18n.T("mgr.title"))
 	m.table = widget.NewTableWithHeaders(
 		func() (int, int) { return len(m.status), len(managerColumns) },
 		func() fyne.CanvasObject { return widget.NewLabel("placeholder-text") },
@@ -75,7 +83,7 @@ func newManagerWindow(g *gui) *managerWindow {
 	}
 	m.table.UpdateHeader = func(id widget.TableCellID, o fyne.CanvasObject) {
 		if id.Col >= 0 {
-			o.(*widget.Label).SetText(managerColumns[id.Col].title)
+			o.(*widget.Label).SetText(i18n.T(managerColumns[id.Col].key))
 		}
 	}
 	for i, c := range managerColumns {
@@ -88,11 +96,11 @@ func newManagerWindow(g *gui) *managerWindow {
 		}
 	}
 
-	m.connectBtn = widget.NewButtonWithIcon("接続", theme.MediaPlayIcon(), func() { m.g.connect(m.selected) })
-	m.disconnectBtn = widget.NewButtonWithIcon("切断", theme.MediaStopIcon(), func() { m.g.disconnect(m.selected) })
-	newBtn := widget.NewButtonWithIcon("新規", theme.ContentAddIcon(), func() { m.g.openEditor("") })
-	m.editBtn = widget.NewButtonWithIcon("プロパティ", theme.DocumentCreateIcon(), func() { m.g.openEditor(m.selected) })
-	m.deleteBtn = widget.NewButtonWithIcon("削除", theme.DeleteIcon(), m.remove)
+	m.connectBtn = widget.NewButtonWithIcon(i18n.T("btn.connect"), theme.MediaPlayIcon(), func() { m.g.connect(m.selected) })
+	m.disconnectBtn = widget.NewButtonWithIcon(i18n.T("btn.disconnect"), theme.MediaStopIcon(), func() { m.g.disconnect(m.selected) })
+	newBtn := widget.NewButtonWithIcon(i18n.T("btn.new"), theme.ContentAddIcon(), func() { m.g.openEditor("") })
+	m.editBtn = widget.NewButtonWithIcon(i18n.T("btn.properties"), theme.DocumentCreateIcon(), func() { m.g.openEditor(m.selected) })
+	m.deleteBtn = widget.NewButtonWithIcon(i18n.T("btn.delete"), theme.DeleteIcon(), m.remove)
 	m.connectBtn.Importance = widget.HighImportance
 	toolbar := container.NewHBox(m.connectBtn, m.disconnectBtn, widget.NewSeparator(), newBtn, m.editBtn, m.deleteBtn, layout.NewSpacer())
 
@@ -103,8 +111,7 @@ func newManagerWindow(g *gui) *managerWindow {
 	split := container.NewVSplit(m.table, detailPane)
 	split.Offset = 0.45
 	m.w.SetContent(container.NewBorder(container.NewVBox(toolbar, widget.NewSeparator()), nil, nil, nil, split))
-	m.w.Resize(fyne.NewSize(900, 560))
-	return m
+	m.refresh()
 }
 
 func (m *managerWindow) show() {
@@ -137,7 +144,7 @@ func (m *managerWindow) refresh() {
 		}
 		return
 	}
-	m.title.SetText(fmt.Sprintf("%s の接続情報", s.Name))
+	m.title.SetText(i18n.T("mgr.infoTitle", s.Name))
 	m.editBtn.Enable()
 	m.deleteBtn.Enable()
 	if isActive(s.State) {
@@ -154,11 +161,11 @@ func (m *managerWindow) remove() {
 	if name == "" {
 		return
 	}
-	dialog.ShowConfirm("削除", fmt.Sprintf("接続設定 %q を削除しますか?", name), func(ok bool) {
+	dialog.ShowConfirm(i18n.T("mgr.deleteTitle"), i18n.T("mgr.deleteConfirm", name), func(ok bool) {
 		if !ok {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*ctxSecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := m.g.client.DeleteProfile(ctx, name); err != nil {
 			dialog.ShowError(err, m.w)

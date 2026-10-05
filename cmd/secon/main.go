@@ -4,24 +4,12 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/mikuta0407/secon/internal/i18n"
 )
 
 // version はリリースビルドで -ldflags "-X main.version=..." により埋め込む。
 var version = "dev"
-
-const usageText = `usage: secon <command> [args]
-
-commands:
-  status                 プロファイル一覧と接続状態
-  connect <profile>      接続する
-  disconnect <profile>   切断する
-  reload                 デーモンに設定ファイルを再読み込みさせる
-  service install|uninstall [--user]
-                         launchd / systemd に登録・解除する
-  daemon [flags]         デーモンとして起動する (通常は launchd / systemd から)
-  version                バージョンを表示する
-  debug dump|socks       開発用 (デーモンを使わずに直接接続する)
-`
 
 func main() {
 	if len(os.Args) < 2 {
@@ -48,7 +36,7 @@ func main() {
 		fmt.Println("secon", version)
 		return
 	case "help", "-h", "--help":
-		fmt.Print(usageText)
+		fmt.Print(i18n.T("cli.usage"))
 		return
 	default:
 		usage()
@@ -60,6 +48,6 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, usageText)
+	fmt.Fprint(os.Stderr, i18n.T("cli.usage"))
 	os.Exit(2)
 }

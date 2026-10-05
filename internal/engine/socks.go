@@ -11,7 +11,7 @@ import (
 // runSocksMode はセッションをユーザ空間 TCP/IP スタックで終端する。
 func runSocksMode(ctx context.Context, r *runner, sess *proto.Session) error {
 	hostname, _ := os.Hostname()
-	n, err := usernet.Start(ctx, sess, usernet.Config{MAC: r.mac, Hostname: hostname, Logf: r.logf})
+	n, err := usernet.Start(ctx, sess, usernet.Config{MAC: r.mac, Hostname: hostname, Logf: r.logf, Static: staticLease(r.profile.Static)})
 	if err != nil {
 		return err
 	}

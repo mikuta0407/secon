@@ -10,6 +10,7 @@ import (
 
 	"github.com/mikuta0407/secon/internal/api"
 	"github.com/mikuta0407/secon/internal/engine"
+	"github.com/mikuta0407/secon/internal/i18n"
 )
 
 func client() *api.Client { return api.NewClient(api.ClientSocket()) }
@@ -32,10 +33,10 @@ func runStatus(args []string) error {
 				return nil
 			}
 		}
-		return fmt.Errorf("no such profile: %s", args[0])
+		return i18n.Errorf("cli.noSuchProfile", args[0])
 	}
 	if len(st) == 0 {
-		fmt.Println("プロファイルがありません")
+		fmt.Println(i18n.T("cli.noProfiles"))
 		return nil
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
@@ -48,31 +49,31 @@ func runStatus(args []string) error {
 
 func printDetail(s engine.Status) {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	row := func(k, v string) {
+	row := func(key, v string) {
 		if v != "" {
-			fmt.Fprintf(tw, "%s:\t%s\n", k, v)
+			fmt.Fprintf(tw, "%s:\t%s\n", i18n.T(key), v)
 		}
 	}
-	row("Name", s.Name)
-	row("Mode", s.Mode)
-	row("Server", s.Server)
-	row("Hub/User", s.Hub+" / "+s.User)
-	row("State", fmt.Sprintf("%s (since %s)", s.State, s.Since.Local().Format(time.DateTime)))
-	row("Error", s.Error)
-	row("Session", s.Session)
-	row("Server info", s.ServerInfo)
-	row("Interface", s.Interface)
-	row("Address", s.Address)
-	row("Gateway", s.Gateway)
-	row("DNS", strings.Join(s.DNS, ", "))
-	row("SOCKS5", s.Socks)
+	fmt.Fprintf(tw, "%s:\t%s\n", i18n.T("col.name"), s.Name)
+	row("detail.mode", s.Mode)
+	row("detail.server", s.Server)
+	row("detail.hubUser", s.Hub+" / "+s.User)
+	row("detail.state", fmt.Sprintf("%s (%s)", s.State, s.Since.Local().Format(time.DateTime)))
+	row("detail.error", s.Error)
+	row("detail.session", s.Session)
+	row("detail.serverInfo", s.ServerInfo)
+	row("detail.interface", s.Interface)
+	row("detail.address", s.Address)
+	row("detail.gateway", s.Gateway)
+	row("detail.dns", strings.Join(s.DNS, ", "))
+	row("detail.socks", s.Socks)
 	for _, f := range s.Forwards {
-		row("Forward", f)
+		row("detail.forward", f)
 	}
 	if s.State == engine.StateConnected {
-		row("Uptime", time.Since(s.Since).Round(time.Second).String())
-		row("Received", fmt.Sprintf("%d bytes (%d packets)", s.BytesIn, s.PacketsIn))
-		row("Sent", fmt.Sprintf("%d bytes (%d packets)", s.BytesOut, s.PacketsOut))
+		row("detail.uptime", time.Since(s.Since).Round(time.Second).String())
+		row("detail.received", i18n.T("detail.traffic", fmt.Sprintf("%d bytes", s.BytesIn), s.PacketsIn))
+		row("detail.sent", i18n.T("detail.traffic", fmt.Sprintf("%d bytes", s.BytesOut), s.PacketsOut))
 	}
 	tw.Flush()
 }
@@ -106,14 +107,14 @@ func runConnect(args []string) error {
 	})
 	if final == nil {
 		if err == nil || c.Err() != nil {
-			return fmt.Errorf("timed out waiting for connection (still trying in background)")
+			return i18n.Errorf("cli.waitTimeout")
 		}
 		return err
 	}
 	if final.State != engine.StateConnected {
-		return fmt.Errorf("%s: %s (daemon keeps retrying; 'secon disconnect %s' to stop)", final.State, final.Error, final.Name)
+		return i18n.Errorf("cli.connectFailed", final.State, final.Error, final.Name)
 	}
-	fmt.Printf("connected: %s (%s)\n", final.Name, final.Address)
+	fmt.Println(i18n.T("cli.connected", final.Name, final.Address))
 	return nil
 }
 

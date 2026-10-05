@@ -9,14 +9,14 @@ Connect as a virtual NIC, or keep everything inside the app and expose it as a S
 
 [日本語版 README はこちら](README.ja.md)
 
-![Connection manager](docs/images/manager.png)
+![Connection manager](docs/images/en/manager.png)
 
 ## Quick start (about 5 minutes)
 
 1. Install: `brew install mikuta0407/apps/secon`
 2. Register the daemon: `sudo secon service install`
-3. Add a profile: run `secon-gui`, open **接続マネージャ… (Connection Manager)**, click **新規 (New)**
-4. Connect: click **接続 (Connect)**, or run `secon connect <profile>`
+3. Add a profile: run `secon-gui`, open **Connection Manager…** from the tray, click **New**
+4. Connect: click **Connect**, or run `secon connect <profile>`
 5. Check: `secon status <profile>` shows the IP address, gateway and traffic
 
 Without the GUI, edit `/etc/secon/config.toml` in step 3 (see [Configuration](#configuration)) and run `secon reload`.
@@ -25,7 +25,7 @@ Without the GUI, edit `/etc/secon/config.toml` in step 3 (see [Configuration](#c
 
 | Feature | What it does |
 |---|---|
-| NIC mode | Creates a virtual NIC (Linux: TAP, macOS: utun). Gets an address by DHCP. Works like a normal L2 VPN (tested with SSH, HTTP, SMB) |
+| NIC mode | Creates a virtual NIC (Linux: TAP, macOS: utun). Gets an address by DHCP or uses a static one. Works like a normal L2 VPN (tested with SSH, HTTP, SMB) |
 | SOCKS5 mode | No virtual NIC, no root. The TCP/IP stack runs inside secon and listens as a SOCKS5 proxy |
 | Port forwarding | Listens on a local port and forwards to a host behind the VPN. Works in both modes (for apps without SOCKS support, such as RDP clients) |
 | Routing | Adds static routes to the VPN side, optionally makes the VPN the default gateway, and sets the VPN DNS |
@@ -45,19 +45,19 @@ Without the GUI, edit `/etc/secon/config.toml` in step 3 (see [Configuration](#c
 
 - macOS: installed by Homebrew together with `secon`.
 - Linux: build it from source (see [Development](#development)). The tray needs a StatusNotifierItem host (on GNOME: the AppIndicator extension).
-- The GUI text is Japanese for now.
+- Language: English or Japanese, chosen from the OS language. Change it from the tray menu: **Language / 言語** → Automatic / English / 日本語.
 
-![Tray menu](docs/images/tray.png)
+![Tray menu](docs/images/en/tray.png)
 
 ### Connect or disconnect
 
 1. Click the tray icon (green = at least one profile connected)
 2. Hover a profile
-3. Click **接続 (Connect)** or **切断 (Disconnect)**
+3. Click **Connect** or **Disconnect**
 
 ### Connection manager
 
-Tray menu → **接続マネージャ… (Connection Manager)**.
+Tray menu → **Connection Manager…**.
 
 | Area | Shows |
 |---|---|
@@ -67,14 +67,14 @@ Tray menu → **接続マネージャ… (Connection Manager)**.
 
 ### Create or edit a profile
 
-1. In the connection manager, click **新規 (New)**, or select a profile and click **プロパティ (Properties)**
+1. In the connection manager, click **New**, or select a profile and click **Properties**
 2. Fill in server (`host:port`), virtual hub, user name and password (empty password = anonymous)
-3. Choose the mode. Only the fields for that mode are shown
-4. Click **保存 (Save)**. The daemon rewrites the config file and applies it immediately
+3. Choose the mode and the IP address source (**DHCP** or **Static**). Only the fields you need are shown
+4. Click **Save**. The daemon rewrites the config file and applies it immediately
 
-![Profile properties](docs/images/properties.png)
+![Profile properties](docs/images/en/properties.png)
 
-The properties window of an existing profile also has a Connect/Disconnect button and a **接続情報 (Connection info)** tab.
+The properties window of an existing profile also has a Connect/Disconnect button and a **Connection info** tab.
 
 ## CLI
 
@@ -87,6 +87,8 @@ The properties window of an existing profile also has a Connect/Disconnect butto
 | `secon service install` / `uninstall` | Register / remove the daemon (launchd or systemd) |
 
 Other commands: `secon version`, `secon daemon` (run in the foreground), `secon debug dump|socks` (connect without the daemon, for troubleshooting).
+
+The CLI follows the OS language. Force it with `SECON_LANG=en` or `SECON_LANG=ja`.
 
 ```console
 $ secon status
@@ -123,6 +125,11 @@ auto_connect = true
 cert_sha256 = "0e84ded0..."  # pin a self-signed server certificate
 # proxy = "http://user:pass@proxy.example.com:8080"
 
+[profile.static]             # omit this table to use DHCP
+address = "10.20.0.50/24"
+gateway = "10.20.0.1"
+dns = ["10.20.0.1"]
+
 [profile.nic]
 routes = ["10.20.0.0/16"]    # send only these networks through the VPN
 default_gateway = false      # true = send all traffic through the VPN
@@ -136,6 +143,16 @@ target = "10.20.0.5:3389"
 
 For a SOCKS5 profile, set `mode = "socks"` and use `[profile.socks]` with `listen = "127.0.0.1:1080"` (optional `username` / `password`).
 
+### Static IP address
+
+By default the address, gateway and DNS come from DHCP on the VPN side. Set `[profile.static]` (or choose **Static** in the GUI) to skip DHCP:
+
+- `address` (required): IPv4 address with prefix length, e.g. `10.20.0.50/24`
+- `gateway` (optional): must be inside that subnet; needed for `routes` and `default_gateway`
+- `dns` (optional): DNS servers, used by SOCKS5 name resolution and by `nic.dns`
+
+It works in both NIC and SOCKS modes.
+
 ### Server certificate
 
 1. Default: verified against the OS trust store
@@ -144,8 +161,8 @@ For a SOCKS5 profile, set `mode = "socks"` and use `[profile.socks]` with `liste
 
 ### Routes and the default gateway (NIC mode)
 
-- The VPN subnet from DHCP is reachable without any setting.
-- `routes`: networks behind the VPN router. They go to the DHCP router; everything else uses your normal connection.
+- The VPN subnet (from DHCP or `static.address`) is reachable without any setting.
+- `routes`: networks behind the VPN router. They go to the gateway (DHCP router or `static.gateway`); everything else uses your normal connection.
 - `default_gateway = true`: all traffic goes through the VPN. The route to the VPN server itself stays on the original gateway.
 - Routes and DNS settings are removed on disconnect.
 
@@ -155,7 +172,6 @@ For a SOCKS5 profile, set `mode = "socks"` and use `[profile.socks]` with `liste
 - One TCP connection per session; no UDP acceleration
 - IPv4 only
 - Tested against SoftEther VPN Server 5.01
-- GUI text is Japanese only
 
 ## Uninstall
 

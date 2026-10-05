@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 
 	"github.com/mikuta0407/secon/internal/config"
 	"github.com/mikuta0407/secon/internal/engine"
+	"github.com/mikuta0407/secon/internal/i18n"
 )
 
 // profileEditor は 1 つの接続設定のプロパティウィンドウ (SoftEther クライアントの「接続設定のプロパティ」相当)。
@@ -29,11 +29,13 @@ type profileEditor struct {
 	connectBtn *widget.Button
 
 	name, server, hub, user, password, cert, proxy *widget.Entry
+	staticAddr, staticGW, staticDNS                *widget.Entry
 	socksListen, routes, dnsDomains, forwards      *widget.Entry
-	mode                                           *widget.RadioGroup
+	mode, addressing                               *widget.RadioGroup
 	autoConnect, insecure, defaultGW, dns          *widget.Check
 
 	form               *fyne.Container
+	staticRows         []formRow
 	socksRows, nicRows []formRow
 	dnsDomainRow       formRow
 }
@@ -51,9 +53,173 @@ func (r formRow) setVisible(v bool) {
 	}
 }
 
-// updateVisibility は選択中のモードで使う項目だけを表示する。
+func newProfileEditor(g *gui, orig *config.Profile) *profileEditor {
+	e := &profileEditor{g: g, orig: orig}
+	e.w = g.app.NewWindow("")
+	e.w.SetCloseIntercept(e.close)
+	e.build()
+	if orig != nil {
+		e.fill(*orig)
+	} else {
+		e.fill(config.Profile{Hub: "VPN", Mode: config.ModeNIC})
+	}
+	e.w.Resize(fyne.NewSize(620, 620))
+	return e
+}
+
+// build はウィンドウの中身を現在の言語で作る。
+func (e *profileEditor) build() {
+	if e.orig == nil {
+		e.w.SetTitle(i18n.T("ed.newTitle"))
+	} else {
+		e.w.SetTitle(i18n.T("ed.propsTitle", e.orig.Name))
+	}
+
+	entry := func(placeholder string) *widget.Entry {
+		w := widget.NewEntry()
+		w.SetPlaceHolder(placeholder)
+		return w
+	}
+	multi := func(placeholder string) *widget.Entry {
+		w := widget.NewMultiLineEntry()
+		w.SetPlaceHolder(placeholder)
+		return w
+	}
+	e.name = entry("")
+	e.server = entry("vpn.example.com:443")
+	e.hub = entry("")
+	e.user = entry("")
+	e.password = widget.NewPasswordEntry()
+	e.password.SetPlaceHolder(i18n.T("ph.password"))
+	e.cert = entry(i18n.T("ph.cert"))
+	e.proxy = entry("http://user:pass@proxy:8080")
+	e.mode = widget.NewRadioGroup([]string{config.ModeNIC, config.ModeSocks}, nil)
+	e.mode.Horizontal = true
+	e.addressing = widget.NewRadioGroup([]string{i18n.T("addr.dhcp"), i18n.T("addr.static")}, nil)
+	e.addressing.Horizontal = true
+	e.staticAddr = entry("10.0.0.50/24")
+	e.staticGW = entry("10.0.0.1")
+	e.staticDNS = entry(i18n.T("ph.staticDNS"))
+	e.autoConnect = widget.NewCheck(i18n.T("chk.autoConnect"), nil)
+	e.insecure = widget.NewCheck(i18n.T("chk.insecure"), nil)
+	e.socksListen = entry("127.0.0.1:1080")
+	e.defaultGW = widget.NewCheck(i18n.T("chk.defaultGW"), nil)
+	e.dns = widget.NewCheck(i18n.T("chk.dns"), nil)
+	e.routes = multi(i18n.T("ph.routes"))
+	e.dnsDomains = entry(i18n.T("ph.dnsDomains"))
+	e.forwards = multi(i18n.T("ph.forwards"))
+
+	// モードなどによって使う項目だけを表示する。widget.Form は行を隠せないので
+	// FormLayout で組む (ラベルと入力欄の両方が非表示の行は詰めて表示される)
+	e.form = container.New(layout.NewFormLayout())
+	row := func(key string, w fyne.CanvasObject) formRow {
+		text := ""
+		if key != "" {
+			text = i18n.T(key)
+		}
+		l := widget.NewLabelWithStyle(text, fyne.TextAlignTrailing, fyne.TextStyle{Bold: true})
+		e.form.Add(l)
+		e.form.Add(w)
+		return formRow{l, w}
+	}
+	row("field.name", e.name)
+	row("field.server", e.server)
+	row("field.hub", e.hub)
+	row("field.user", e.user)
+	row("field.password", e.password)
+	row("field.mode", e.mode)
+	row("", e.autoConnect)
+	row("field.cert", e.cert)
+	row("", e.insecure)
+	row("field.proxy", e.proxy)
+	row("field.addressing", e.addressing)
+	e.staticRows = []formRow{
+		row("field.staticAddress", e.staticAddr),
+		row("field.staticGateway", e.staticGW),
+		row("field.staticDNS", e.staticDNS),
+	}
+	e.socksRows = []formRow{row("field.socksListen", e.socksListen)}
+	e.nicRows = []formRow{row("field.routes", e.routes), row("", e.defaultGW), row("", e.dns)}
+	e.dnsDomainRow = row("field.dnsDomains", e.dnsDomains)
+	row("field.forwards", e.forwards)
+	e.mode.OnChanged = func(string) { e.updateVisibility() }
+	e.addressing.OnChanged = func(string) { e.updateVisibility() }
+	e.dns.OnChanged = func(bool) { e.updateVisibility() }
+
+	saveBtn := widget.NewButtonWithIcon(i18n.T("btn.save"), theme.DocumentSaveIcon(), e.save)
+	saveBtn.Importance = widget.HighImportance
+	cancelBtn := widget.NewButton(i18n.T("btn.cancel"), e.close)
+	buttons := container.NewHBox(layout.NewSpacer(), cancelBtn, saveBtn)
+
+	var body fyne.CanvasObject = container.NewVScroll(e.form)
+	var top fyne.CanvasObject
+	if e.orig != nil {
+		e.status = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+		e.details = newDetailsView()
+		e.connectBtn = widget.NewButtonWithIcon(i18n.T("btn.connect"), theme.MediaPlayIcon(), e.toggleConnect)
+		top = container.NewVBox(container.NewBorder(nil, nil, nil, e.connectBtn, e.status), widget.NewSeparator())
+		body = container.NewAppTabs(
+			container.NewTabItem(i18n.T("tab.settings"), body),
+			container.NewTabItem(i18n.T("tab.info"), container.NewVScroll(e.details.box)),
+		)
+	}
+	e.w.SetContent(container.NewBorder(top, buttons, nil, nil, body))
+}
+
+func (e *profileEditor) entries() []*widget.Entry {
+	return []*widget.Entry{e.name, e.server, e.hub, e.user, e.password, e.cert, e.proxy,
+		e.staticAddr, e.staticGW, e.staticDNS, e.socksListen, e.routes, e.dnsDomains, e.forwards}
+}
+
+func (e *profileEditor) checks() []*widget.Check {
+	return []*widget.Check{e.autoConnect, e.insecure, e.defaultGW, e.dns}
+}
+
+// rebuild は入力中の値を保ったまま現在の言語で作り直す。
+func (e *profileEditor) rebuild() {
+	var texts []string
+	for _, w := range e.entries() {
+		texts = append(texts, w.Text)
+	}
+	var checks []bool
+	for _, c := range e.checks() {
+		checks = append(checks, c.Checked)
+	}
+	mode, static := e.mode.Selected, e.isStatic()
+
+	e.build()
+	for i, w := range e.entries() {
+		w.SetText(texts[i])
+	}
+	for i, c := range e.checks() {
+		c.SetChecked(checks[i])
+	}
+	e.mode.SetSelected(mode)
+	e.setStatic(static)
+	e.updateVisibility()
+	e.updateStatus(e.g.status)
+}
+
+// isStatic は「固定」を選んでいるか。表示文字列は言語で変わるので選択肢の位置で判定する
+// (言語切り替え直後の rebuild でも正しく判定できるように)。
+func (e *profileEditor) isStatic() bool {
+	return e.addressing.Selected != "" && e.addressing.Selected == e.addressing.Options[1]
+}
+
+func (e *profileEditor) setStatic(v bool) {
+	i := 0
+	if v {
+		i = 1
+	}
+	e.addressing.SetSelected(e.addressing.Options[i])
+}
+
+// updateVisibility は選択中のモード・アドレス取得方法で使う項目だけを表示する。
 func (e *profileEditor) updateVisibility() {
 	nic := e.mode.Selected == config.ModeNIC
+	for _, r := range e.staticRows {
+		r.setVisible(e.isStatic())
+	}
 	for _, r := range e.socksRows {
 		r.setVisible(!nic)
 	}
@@ -62,93 +228,6 @@ func (e *profileEditor) updateVisibility() {
 	}
 	e.dnsDomainRow.setVisible(nic && e.dns.Checked)
 	e.form.Refresh()
-}
-
-func newProfileEditor(g *gui, orig *config.Profile) *profileEditor {
-	e := &profileEditor{g: g, orig: orig}
-	title := "新しい接続設定"
-	if orig != nil {
-		title = "接続設定のプロパティ - " + orig.Name
-	}
-	e.w = g.app.NewWindow(title)
-	e.w.SetCloseIntercept(e.close)
-
-	e.name = widget.NewEntry()
-	e.server = widget.NewEntry()
-	e.server.SetPlaceHolder("vpn.example.com:443")
-	e.hub = widget.NewEntry()
-	e.user = widget.NewEntry()
-	e.password = widget.NewPasswordEntry()
-	e.password.SetPlaceHolder("空なら匿名認証")
-	e.cert = widget.NewEntry()
-	e.cert.SetPlaceHolder("サーバ証明書の SHA-256 (自己署名のピン留め)")
-	e.proxy = widget.NewEntry()
-	e.proxy.SetPlaceHolder("http://user:pass@proxy:8080")
-	e.mode = widget.NewRadioGroup([]string{config.ModeNIC, config.ModeSocks}, nil)
-	e.mode.Horizontal = true
-	e.autoConnect = widget.NewCheck("起動時に接続", nil)
-	e.insecure = widget.NewCheck("証明書を検証しない", nil)
-	e.socksListen = widget.NewEntry()
-	e.socksListen.SetPlaceHolder("127.0.0.1:1080")
-	e.defaultGW = widget.NewCheck("VPN をデフォルトゲートウェイにする", nil)
-	e.dns = widget.NewCheck("VPN 側 DNS を使う", nil)
-	e.routes = widget.NewMultiLineEntry()
-	e.routes.SetPlaceHolder("10.0.0.0/8 (1 行に 1 つ)")
-	e.dnsDomains = widget.NewEntry()
-	e.dnsDomains.SetPlaceHolder("corp.example (カンマ区切り)")
-	e.forwards = widget.NewMultiLineEntry()
-	e.forwards.SetPlaceHolder("127.0.0.1:13389=10.0.0.5:3389 (1 行に 1 つ)")
-
-	// モードによって使う項目だけを表示する。widget.Form は行を隠せないので
-	// FormLayout で組む (ラベルと入力欄の両方が非表示の行は詰めて表示される)
-	e.form = container.New(layout.NewFormLayout())
-	row := func(label string, w fyne.CanvasObject) formRow {
-		l := widget.NewLabelWithStyle(label, fyne.TextAlignTrailing, fyne.TextStyle{Bold: true})
-		e.form.Add(l)
-		e.form.Add(w)
-		return formRow{l, w}
-	}
-	row("接続設定名", e.name)
-	row("サーバ", e.server)
-	row("仮想 HUB", e.hub)
-	row("ユーザ名", e.user)
-	row("パスワード", e.password)
-	row("モード", e.mode)
-	row("", e.autoConnect)
-	row("証明書", e.cert)
-	row("", e.insecure)
-	row("HTTP Proxy", e.proxy)
-	e.socksRows = []formRow{row("SOCKS5 待受", e.socksListen)}
-	e.nicRows = []formRow{row("経路", e.routes), row("", e.defaultGW), row("", e.dns)}
-	e.dnsDomainRow = row("DNS ドメイン", e.dnsDomains)
-	row("ポート転送", e.forwards)
-	e.mode.OnChanged = func(string) { e.updateVisibility() }
-	e.dns.OnChanged = func(bool) { e.updateVisibility() }
-	form := e.form
-
-	saveBtn := widget.NewButtonWithIcon("保存", theme.DocumentSaveIcon(), e.save)
-	saveBtn.Importance = widget.HighImportance
-	cancelBtn := widget.NewButton("キャンセル", e.close)
-	buttons := container.NewHBox(layout.NewSpacer(), cancelBtn, saveBtn)
-
-	var body fyne.CanvasObject = container.NewVScroll(form)
-	var top fyne.CanvasObject
-	if orig != nil {
-		e.status = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-		e.details = newDetailsView()
-		e.connectBtn = widget.NewButtonWithIcon("接続", theme.MediaPlayIcon(), e.toggleConnect)
-		top = container.NewVBox(container.NewBorder(nil, nil, nil, e.connectBtn, e.status), widget.NewSeparator())
-		body = container.NewAppTabs(
-			container.NewTabItem("接続設定", body),
-			container.NewTabItem("接続情報", container.NewVScroll(e.details.box)),
-		)
-		e.fill(*orig)
-	} else {
-		e.fill(config.Profile{Hub: "VPN", Mode: config.ModeNIC})
-	}
-	e.w.SetContent(container.NewBorder(top, buttons, nil, nil, body))
-	e.w.Resize(fyne.NewSize(620, 600))
-	return e
 }
 
 // origName は編集元の名前 (新規なら "")。
@@ -188,7 +267,7 @@ func (e *profileEditor) updateStatus(st []engine.Status) {
 	x := findStatus(st, e.orig.Name)
 	e.details.update(x)
 	if x == nil {
-		e.status.SetText(e.orig.Name + "  (削除されました)")
+		e.status.SetText(i18n.T("ed.deleted", e.orig.Name))
 		e.connectBtn.Disable()
 		return
 	}
@@ -202,10 +281,10 @@ func (e *profileEditor) updateStatus(st []engine.Status) {
 	e.status.SetText(text)
 	e.connectBtn.Enable()
 	if isActive(x.State) {
-		e.connectBtn.SetText("切断")
+		e.connectBtn.SetText(i18n.T("btn.disconnect"))
 		e.connectBtn.SetIcon(theme.MediaStopIcon())
 	} else {
-		e.connectBtn.SetText("接続")
+		e.connectBtn.SetText(i18n.T("btn.connect"))
 		e.connectBtn.SetIcon(theme.MediaPlayIcon())
 	}
 }
@@ -221,6 +300,10 @@ func (e *profileEditor) fill(p config.Profile) {
 	e.cert.SetText(p.CertSHA256)
 	e.insecure.SetChecked(p.Insecure)
 	e.proxy.SetText(p.Proxy)
+	e.setStatic(p.Static.Enabled())
+	e.staticAddr.SetText(p.Static.Address)
+	e.staticGW.SetText(p.Static.Gateway)
+	e.staticDNS.SetText(strings.Join(p.Static.DNS, ", "))
 	e.socksListen.SetText(p.Socks.Listen)
 	e.routes.SetText(strings.Join(p.NIC.Routes, "\n"))
 	e.defaultGW.SetChecked(p.NIC.DefaultGateway)
@@ -263,6 +346,13 @@ func (e *profileEditor) collect() (config.Profile, error) {
 			DNSDomains:     splitList(e.dnsDomains.Text, ","),
 		},
 	}
+	if e.isStatic() {
+		p.Static = config.Static{
+			Address: strings.TrimSpace(e.staticAddr.Text),
+			Gateway: strings.TrimSpace(e.staticGW.Text),
+			DNS:     splitList(e.staticDNS.Text, ","),
+		}
+	}
 	// 表示していない (別モード用の) 項目は保存しない
 	if p.Mode == config.ModeSocks {
 		p.Socks.Listen = strings.TrimSpace(e.socksListen.Text)
@@ -277,7 +367,7 @@ func (e *profileEditor) collect() (config.Profile, error) {
 	for _, line := range splitList(e.forwards.Text, "\n") {
 		l, t, ok := strings.Cut(line, "=")
 		if !ok {
-			return p, fmt.Errorf("ポート転送の書式が不正です: %q (listen=target)", line)
+			return p, i18n.Errorf("ed.invalidForward", line)
 		}
 		p.Forwards = append(p.Forwards, config.Forward{Listen: strings.TrimSpace(l), Target: strings.TrimSpace(t)})
 	}

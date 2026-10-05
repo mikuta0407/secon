@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/mikuta0407/secon/internal/i18n"
 )
 
 const (
@@ -47,10 +49,21 @@ type Profile struct {
 
 	Proxy string `toml:"proxy,omitempty" json:"proxy,omitempty"` // http://[user:pass@]host:port
 
+	Static   Static    `toml:"static,omitempty" json:"static,omitempty"` // DHCP を使わずに固定アドレスを使う
 	Socks    Socks     `toml:"socks,omitempty" json:"socks,omitempty"`
 	NIC      NIC       `toml:"nic,omitempty" json:"nic,omitempty"`
 	Forwards []Forward `toml:"forward,omitempty" json:"forward,omitempty"`
 }
+
+// Static は DHCP の代わりに使う固定アドレス設定。Address が空なら DHCP。
+type Static struct {
+	Address string   `toml:"address,omitempty" json:"address,omitempty"` // CIDR (例 10.0.0.50/24)
+	Gateway string   `toml:"gateway,omitempty" json:"gateway,omitempty"`
+	DNS     []string `toml:"dns,omitempty" json:"dns,omitempty"`
+}
+
+// Enabled は固定アドレスが設定されているか。
+func (s Static) Enabled() bool { return s.Address != "" }
 
 type Socks struct {
 	Listen   string `toml:"listen,omitempty" json:"listen,omitempty"` // 既定 127.0.0.1:1080
@@ -68,6 +81,37 @@ type NIC struct {
 type Forward struct {
 	Listen string `toml:"listen,omitempty" json:"listen,omitempty"`
 	Target string `toml:"target,omitempty" json:"target,omitempty"`
+}
+
+func (s Static) validate() error {
+	if !s.Enabled() {
+		if s.Gateway != "" || len(s.DNS) > 0 {
+			return i18n.Errorf("cfg.staticNeedsAddress")
+		}
+		return nil
+	}
+	prefix, err := netip.ParsePrefix(s.Address)
+	if err != nil || !prefix.Addr().Is4() {
+		return i18n.Errorf("cfg.invalidAddress", s.Address)
+	}
+	if prefix.Addr() == prefix.Masked().Addr() && prefix.Bits() < 31 {
+		return i18n.Errorf("cfg.networkAddress", s.Address)
+	}
+	if s.Gateway != "" {
+		gw, err := netip.ParseAddr(s.Gateway)
+		if err != nil || !gw.Is4() {
+			return i18n.Errorf("cfg.invalidGateway", s.Gateway)
+		}
+		if !prefix.Masked().Contains(gw) {
+			return i18n.Errorf("cfg.gatewayOutside", s.Gateway, s.Address)
+		}
+	}
+	for _, d := range s.DNS {
+		if a, err := netip.ParseAddr(d); err != nil || !a.Is4() {
+			return i18n.Errorf("cfg.invalidDNS", d)
+		}
+	}
+	return nil
 }
 
 // DefaultPath は既定の設定ファイルパス。
@@ -107,14 +151,14 @@ func (c *Config) Validate() error {
 	for i := range c.Profiles {
 		p := &c.Profiles[i]
 		if p.Name == "" {
-			return fmt.Errorf("%d 番目の接続設定: 接続設定名を入力してください", i+1)
+			return i18n.Errorf("cfg.profileNameRequired", i+1)
 		}
 		if seen[p.Name] {
-			return fmt.Errorf("接続設定名 %q が重複しています", p.Name)
+			return i18n.Errorf("cfg.duplicateName", p.Name)
 		}
 		seen[p.Name] = true
 		if err := p.Normalize(); err != nil {
-			return fmt.Errorf("接続設定 %q: %w", p.Name, err)
+			return i18n.Errorf("cfg.profileError", p.Name, err)
 		}
 	}
 	return nil
@@ -123,48 +167,51 @@ func (c *Config) Validate() error {
 // Normalize はプロファイルを検証し、既定値を補う。
 func (p *Profile) Normalize() error {
 	if p.Name == "" {
-		return errors.New("接続設定名を入力してください")
+		return i18n.Errorf("cfg.nameRequired")
 	}
 	if p.Server == "" {
-		return errors.New("サーバを入力してください")
+		return i18n.Errorf("cfg.serverRequired")
 	}
 	if _, _, err := net.SplitHostPort(p.Server); err != nil {
 		p.Server = net.JoinHostPort(p.Server, "443")
 	}
 	if p.Hub == "" {
-		return errors.New("仮想 HUB を入力してください")
+		return i18n.Errorf("cfg.hubRequired")
 	}
 	if p.User == "" {
-		return errors.New("ユーザ名を入力してください")
+		return i18n.Errorf("cfg.userRequired")
 	}
 	switch p.Mode {
 	case "":
 		p.Mode = ModeSocks
 	case ModeSocks, ModeNIC:
 	default:
-		return fmt.Errorf("モード %q は不明です (nic または socks)", p.Mode)
+		return i18n.Errorf("cfg.unknownMode", p.Mode)
 	}
 	p.CertSHA256 = strings.ToLower(strings.ReplaceAll(p.CertSHA256, ":", ""))
 	if p.Proxy != "" {
 		u, err := url.Parse(p.Proxy)
 		if err != nil || u.Scheme != "http" || u.Host == "" {
-			return fmt.Errorf("HTTP Proxy の形式が不正です: %q (http://host:port)", p.Proxy)
+			return i18n.Errorf("cfg.invalidProxy", p.Proxy)
 		}
 	}
 	if p.Mode == ModeSocks && p.Socks.Listen == "" {
 		p.Socks.Listen = "127.0.0.1:1080"
 	}
+	if err := p.Static.validate(); err != nil {
+		return err
+	}
 	for _, r := range p.NIC.Routes {
 		if _, err := netip.ParsePrefix(r); err != nil {
-			return fmt.Errorf("経路の形式が不正です: %q (例 10.0.0.0/8)", r)
+			return i18n.Errorf("cfg.invalidRoute", r)
 		}
 	}
 	for _, f := range p.Forwards {
 		if _, _, err := net.SplitHostPort(f.Listen); err != nil {
-			return fmt.Errorf("ポート転送の待受アドレスが不正です: %q (例 127.0.0.1:13389)", f.Listen)
+			return i18n.Errorf("cfg.invalidForwardListen", f.Listen)
 		}
 		if _, _, err := net.SplitHostPort(f.Target); err != nil {
-			return fmt.Errorf("ポート転送の転送先が不正です: %q (例 10.0.0.5:3389)", f.Target)
+			return i18n.Errorf("cfg.invalidForwardTarget", f.Target)
 		}
 	}
 	return nil

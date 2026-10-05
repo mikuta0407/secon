@@ -68,13 +68,18 @@ func runNICMode(ctx context.Context, r *runner, sess *proto.Session) error {
 		}
 	}()
 
-	actx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	lease, err := dhcp.Acquire(actx)
-	cancel()
-	if err != nil {
-		return err
+	lease := staticLease(p.Static)
+	var renew <-chan time.Time // 固定アドレスなら更新しない
+	if lease == nil {
+		actx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		l, err := dhcp.Acquire(actx)
+		cancel()
+		if err != nil {
+			return err
+		}
+		lease = l
+		defer func() { dhcp.Release(lease) }()
 	}
-	defer dhcp.Release(lease)
 
 	settings := nicSettings(p, lease, sess.RemoteAddr())
 	undo, err := nic.Apply(dev, settings, r.logf)
@@ -89,12 +94,15 @@ func runNICMode(ctx context.Context, r *runner, sess *proto.Session) error {
 	r.logf("nic %s: %s gw %s routes %v default_gateway=%v", dev.Name(), lease.IP, lease.Router, settings.Routes, settings.DefaultGateway)
 
 	for {
+		if lease.LeaseTime > 0 {
+			renew = time.After(time.Until(lease.RenewAt()))
+		}
 		select {
 		case <-ctx.Done():
 			return nil
 		case err := <-errc:
 			return err
-		case <-time.After(time.Until(lease.RenewAt())):
+		case <-renew:
 			rctx, cancel := context.WithTimeout(ctx, lease.LeaseTime/4)
 			nl, err := dhcp.Renew(rctx, lease)
 			cancel()
@@ -108,6 +116,21 @@ func runNICMode(ctx context.Context, r *runner, sess *proto.Session) error {
 			lease = nl
 		}
 	}
+}
+
+// staticLease は固定アドレス設定をリース形式にする (未設定なら nil)。
+func staticLease(s config.Static) *l2.Lease {
+	if !s.Enabled() {
+		return nil
+	}
+	l := &l2.Lease{IP: netip.MustParsePrefix(s.Address), Acquired: time.Now()}
+	if s.Gateway != "" {
+		l.Router = netip.MustParseAddr(s.Gateway)
+	}
+	for _, d := range s.DNS {
+		l.DNS = append(l.DNS, netip.MustParseAddr(d))
+	}
+	return l
 }
 
 func nicSettings(p config.Profile, l *l2.Lease, remote net.Addr) nic.Settings {

@@ -58,3 +58,34 @@ func TestValidateErrors(t *testing.T) {
 		t.Error("expected duplicate name error")
 	}
 }
+
+func TestStaticValidation(t *testing.T) {
+	base := Profile{Name: "x", Server: "s", Hub: "h", User: "u"}
+	ok := []Static{
+		{},
+		{Address: "10.0.0.50/24"},
+		{Address: "10.0.0.50/24", Gateway: "10.0.0.1", DNS: []string{"10.0.0.1", "8.8.8.8"}},
+	}
+	for _, s := range ok {
+		p := base
+		p.Static = s
+		if err := p.Normalize(); err != nil {
+			t.Errorf("%+v: unexpected error %v", s, err)
+		}
+	}
+	bad := []Static{
+		{Gateway: "10.0.0.1"},                          // アドレス無し
+		{Address: "10.0.0.50"},                         // プレフィックス無し
+		{Address: "10.0.0.0/24"},                       // ネットワークアドレス
+		{Address: "10.0.0.50/24", Gateway: "10.1.0.1"}, // サブネット外
+		{Address: "10.0.0.50/24", DNS: []string{"x"}},
+		{Address: "fd00::5/64"},
+	}
+	for _, s := range bad {
+		p := base
+		p.Static = s
+		if err := p.Normalize(); err == nil {
+			t.Errorf("%+v: expected error", s)
+		}
+	}
+}

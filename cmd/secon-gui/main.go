@@ -14,7 +14,11 @@ import (
 
 	"github.com/mikuta0407/secon/internal/api"
 	"github.com/mikuta0407/secon/internal/engine"
+	"github.com/mikuta0407/secon/internal/i18n"
 )
+
+// prefLanguage は表示言語の保存キー (値は auto / en / ja)。
+const prefLanguage = "language"
 
 const (
 	ctxSecond    = time.Second
@@ -40,13 +44,18 @@ type gui struct {
 }
 
 func main() {
-	openManager := flag.Bool("manager", false, "起動時に接続マネージャを開く")
-	editName := flag.String("edit", "", "起動時にこの接続設定のプロパティを開く (確認用)")
-	newProfile := flag.Bool("new", false, "起動時に新しい接続設定のウィンドウを開く (確認用)")
+	openManager := flag.Bool("manager", false, "open the connection manager at startup")
+	editName := flag.String("edit", "", "open the properties of this profile at startup")
+	newProfile := flag.Bool("new", false, "open a new profile window at startup")
+	langFlag := flag.String("lang", "", "display language for this run: auto, en or ja (not saved)")
 	flag.Parse()
 
 	a := app.NewWithID("io.github.mikuta0407.secon")
 	a.Settings().SetTheme(newCompactTheme())
+	i18n.Set(i18n.Lang(a.Preferences().StringWithFallback(prefLanguage, string(i18n.Auto))))
+	if *langFlag != "" {
+		i18n.Set(i18n.Lang(*langFlag))
+	}
 	desk, ok := a.(desktop.App)
 	if !ok {
 		log.Fatal("system tray is not supported on this platform")
@@ -151,9 +160,9 @@ func (g *gui) notifyChanges(next []engine.Status) {
 		}
 		switch {
 		case s.State == engine.StateConnected:
-			g.app.SendNotification(fyne.NewNotification("secon", fmt.Sprintf("%s に接続しました (%s)", s.Name, s.Address)))
+			g.app.SendNotification(fyne.NewNotification("secon", i18n.T("notify.connected", s.Name, s.Address)))
 		case p == engine.StateConnected && s.State == engine.StateReconnecting:
-			g.app.SendNotification(fyne.NewNotification("secon", fmt.Sprintf("%s が切断されました: %s", s.Name, s.Error)))
+			g.app.SendNotification(fyne.NewNotification("secon", i18n.T("notify.disconnected", s.Name, s.Error)))
 		}
 	}
 }
@@ -164,11 +173,11 @@ func (g *gui) render() {
 	connected := false
 
 	if g.daemonErr != nil {
-		it := fyne.NewMenuItem("デーモンに接続できません", nil)
+		it := fyne.NewMenuItem(i18n.T("tray.noDaemon"), nil)
 		it.Disabled = true
 		items = append(items, it)
 	} else if len(g.status) == 0 {
-		it := fyne.NewMenuItem("プロファイルがありません", nil)
+		it := fyne.NewMenuItem(i18n.T("tray.noProfiles"), nil)
 		it.Disabled = true
 		items = append(items, it)
 	}
@@ -177,17 +186,20 @@ func (g *gui) render() {
 		if s.State == engine.StateConnected {
 			connected = true
 		}
-		label := fmt.Sprintf("%s %s — %s", stateMark[s.State], s.Name, stateLabel[s.State])
+		label := fmt.Sprintf("%s %s — %s", stateMark[s.State], s.Name, stateLabel(s.State))
 		it := fyne.NewMenuItem(label, nil)
 		it.ChildMenu = g.profileMenu(s)
 		items = append(items, it)
 	}
 
-	quit := fyne.NewMenuItem("終了", g.app.Quit)
+	quit := fyne.NewMenuItem(i18n.T("tray.quit"), g.app.Quit)
 	quit.IsQuit = true
+	lang := fyne.NewMenuItem(i18n.T("tray.language"), nil)
+	lang.ChildMenu = g.languageMenu()
 	items = append(items,
 		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("接続マネージャ…", g.openManager),
+		fyne.NewMenuItem(i18n.T("tray.manager"), g.openManager),
+		lang,
 		quit,
 	)
 	g.menu.Items = items
@@ -206,28 +218,59 @@ func (g *gui) profileMenu(s engine.Status) *fyne.Menu {
 		it.Disabled = true
 		items = append(items, it)
 	}
-	info("モード: " + s.Mode)
+	info(i18n.T("tray.mode", s.Mode))
 	if s.Address != "" {
-		info("アドレス: " + s.Address)
+		info(i18n.T("tray.address", s.Address))
 	}
 	if s.Socks != "" {
-		info("SOCKS5: " + s.Socks)
+		info(i18n.T("tray.socks", s.Socks))
 	}
 	for _, f := range s.Forwards {
-		info("転送: " + f)
+		info(i18n.T("tray.forward", f))
 	}
 	if s.Error != "" {
-		info("エラー: " + s.Error)
+		info(i18n.T("tray.error", s.Error))
 	}
 	items = append(items, fyne.NewMenuItemSeparator())
 	name := s.Name
 	if isActive(s.State) {
-		items = append(items, fyne.NewMenuItem("切断", func() { g.disconnect(name) }))
+		items = append(items, fyne.NewMenuItem(i18n.T("btn.disconnect"), func() { g.disconnect(name) }))
 	} else {
-		items = append(items, fyne.NewMenuItem("接続", func() { g.connect(name) }))
+		items = append(items, fyne.NewMenuItem(i18n.T("btn.connect"), func() { g.connect(name) }))
 	}
-	items = append(items, fyne.NewMenuItem("プロパティ…", func() { g.openEditor(name) }))
+	items = append(items, fyne.NewMenuItem(i18n.T("tray.properties"), func() { g.openEditor(name) }))
 	return fyne.NewMenu(s.Name, items...)
+}
+
+// languageMenu は表示言語の切り替えメニュー (自動 / English / 日本語)。
+func (g *gui) languageMenu() *fyne.Menu {
+	current := i18n.Lang(g.app.Preferences().StringWithFallback(prefLanguage, string(i18n.Auto)))
+	var items []*fyne.MenuItem
+	for _, l := range []struct {
+		lang i18n.Lang
+		key  string
+	}{{i18n.Auto, "lang.auto"}, {i18n.En, "lang.en"}, {i18n.Ja, "lang.ja"}} {
+		it := fyne.NewMenuItem(i18n.T(l.key), func() { g.setLanguage(l.lang) })
+		it.Checked = current == l.lang
+		items = append(items, it)
+	}
+	return fyne.NewMenu("", items...)
+}
+
+// setLanguage は表示言語を切り替えて保存し、開いているウィンドウを作り直す。
+func (g *gui) setLanguage(l i18n.Lang) {
+	g.app.Preferences().SetString(prefLanguage, string(l))
+	i18n.Set(l)
+	g.render()
+	if g.manager != nil {
+		g.manager.build()
+	}
+	for _, e := range g.editors {
+		e.rebuild()
+	}
+	for _, e := range g.newEditor {
+		e.rebuild()
+	}
 }
 
 func (g *gui) connect(name string) {

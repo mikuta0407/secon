@@ -9,7 +9,7 @@ Go で書いた、macOS / Linux 向けの SoftEther VPN 互換クライアント
 
 [English README](README.md)
 
-![接続マネージャ](docs/images/manager.png)
+![接続マネージャ](docs/images/ja/manager.png)
 
 ## 5 分で使い始める
 
@@ -25,7 +25,7 @@ GUI を使わない場合は、手順 3 で `/etc/secon/config.toml` を編集�
 
 | 機能 | 内容 |
 |---|---|
-| NIC モード | 仮想 NIC（Linux: TAP / macOS: utun）を作り、DHCP でアドレスを取得。普通の L2 VPN と同じように使えます（SSH・HTTP・SMB で確認済み） |
+| NIC モード | 仮想 NIC（Linux: TAP / macOS: utun）を作り、DHCP または固定アドレスで接続。普通の L2 VPN と同じように使えます（SSH・HTTP・SMB で確認済み） |
 | SOCKS5 モード | 仮想 NIC を作らず root も不要。TCP/IP を secon 内で処理し、SOCKS5 プロキシとして待ち受けます |
 | ポート転送 | ローカルのポートで待ち受け、VPN の向こうのホストへ転送。両モードで使えます（RDP クライアントなど SOCKS 非対応のアプリ用） |
 | ルーティング | VPN 側への静的経路の追加、VPN のデフォルトゲートウェイ化、VPN 側 DNS の設定 |
@@ -45,8 +45,9 @@ GUI を使わない場合は、手順 3 で `/etc/secon/config.toml` を編集�
 
 - macOS: Homebrew で `secon` と一緒に入ります
 - Linux: ソースからビルドします（[開発](#開発)）。トレイの表示には StatusNotifierItem 対応のパネルが必要です（GNOME なら AppIndicator 拡張）
+- 表示言語: OS の言語に合わせて英語 / 日本語。トレイの **Language / 言語** → 自動 / English / 日本語 で切り替えられます
 
-![トレイメニュー](docs/images/tray.png)
+![トレイメニュー](docs/images/ja/tray.png)
 
 ### 接続・切断する
 
@@ -68,10 +69,10 @@ GUI を使わない場合は、手順 3 で `/etc/secon/config.toml` を編集�
 
 1. 接続マネージャで **新規**、または接続設定を選んで **プロパティ**
 2. サーバ（`ホスト:ポート`）・仮想 HUB・ユーザ名・パスワードを入力（パスワードが空なら匿名認証）
-3. モードを選ぶ。そのモードで使う項目だけが表示されます
+3. モードと IP アドレスの取得方法（**DHCP** / **固定**）を選ぶ。必要な項目だけが表示されます
 4. **保存**。デーモンが設定ファイルを書き換え、すぐに反映します
 
-![接続設定のプロパティ](docs/images/properties.png)
+![接続設定のプロパティ](docs/images/ja/properties.png)
 
 既存の接続設定のプロパティには、接続 / 切断ボタンと **接続情報** タブもあります。
 
@@ -86,6 +87,8 @@ GUI を使わない場合は、手順 3 で `/etc/secon/config.toml` を編集�
 | `secon service install` / `uninstall` | デーモンを登録 / 解除（launchd・systemd） |
 
 そのほか: `secon version`、`secon daemon`（前面で起動）、`secon debug dump|socks`（デーモンを介さず直接接続。調査用）
+
+CLI の表示言語は OS に合わせます。`SECON_LANG=en` / `SECON_LANG=ja` で固定できます。
 
 ```console
 $ secon status
@@ -122,6 +125,11 @@ auto_connect = true
 cert_sha256 = "0e84ded0..."  # 自己署名のサーバ証明書をピン留め
 # proxy = "http://user:pass@proxy.example.com:8080"
 
+[profile.static]             # 省略すると DHCP
+address = "10.20.0.50/24"
+gateway = "10.20.0.1"
+dns = ["10.20.0.1"]
+
 [profile.nic]
 routes = ["10.20.0.0/16"]    # このネットワークだけ VPN 経由にする
 default_gateway = false      # true ならすべての通信を VPN 経由にする
@@ -135,6 +143,16 @@ target = "10.20.0.5:3389"
 
 SOCKS5 の接続設定は `mode = "socks"` にして、`[profile.socks]` に `listen = "127.0.0.1:1080"`（必要なら `username` / `password`）を書きます。
 
+### 固定 IP アドレス
+
+既定では、アドレス・ゲートウェイ・DNS を VPN 側の DHCP から取得します。`[profile.static]` を書く（GUI では **固定** を選ぶ）と DHCP を使いません。
+
+- `address`（必須）: プレフィックス長付きの IPv4 アドレス（例 `10.20.0.50/24`）
+- `gateway`（任意）: 同じサブネット内のアドレス。`routes` や `default_gateway` を使うときに必要
+- `dns`（任意）: DNS サーバ。SOCKS5 の名前解決と `nic.dns` で使います
+
+NIC・SOCKS どちらのモードでも使えます。
+
 ### サーバ証明書
 
 1. 既定: OS の信頼ストアで検証
@@ -143,8 +161,8 @@ SOCKS5 の接続設定は `mode = "socks"` にして、`[profile.socks]` に `li
 
 ### 経路とデフォルトゲートウェイ（NIC モード）
 
-- DHCP でもらったサブネットは設定なしで届きます
-- `routes`: VPN 側ルータのさらに奥のネットワーク。DHCP のルータへ送り、それ以外は普段の回線のまま
+- 自分のサブネット（DHCP または `static.address`）は設定なしで届きます
+- `routes`: VPN 側ルータのさらに奥のネットワーク。ゲートウェイ（DHCP のルータ または `static.gateway`）へ送り、それ以外は普段の回線のまま
 - `default_gateway = true`: すべての通信を VPN 経由に。VPN サーバ自体への通信だけは元の経路を使います
 - 経路と DNS の設定は切断時に元に戻ります
 
@@ -154,7 +172,6 @@ SOCKS5 の接続設定は `mode = "socks"` にして、`[profile.socks]` に `li
 - セッションあたり TCP 1 本。UDP 高速化なし
 - IPv4 のみ
 - 動作確認したサーバは SoftEther VPN Server 5.01
-- GUI の表示は日本語のみ
 
 ## アンインストール
 
