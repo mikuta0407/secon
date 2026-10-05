@@ -106,10 +106,12 @@ func httpConnect(ctx context.Context, conn net.Conn, proxy *url.URL, target stri
 	fmt.Fprintf(&b, "CONNECT %s HTTP/1.0\r\n", target)
 	fmt.Fprintf(&b, "Host: %s\r\n", host)
 	b.WriteString("Content-Length: 0\r\nProxy-Connection: Keep-Alive\r\nPragma: no-cache\r\n")
+	// 本家と同じく、ユーザ名とパスワードが両方あるときだけ認証ヘッダを送る
 	if u := proxy.User; u != nil {
-		pass, _ := u.Password()
-		cred := base64.StdEncoding.EncodeToString([]byte(u.Username() + ":" + pass))
-		fmt.Fprintf(&b, "Proxy-Authorization: Basic %s\r\n", cred)
+		if pass, ok := u.Password(); ok && u.Username() != "" && pass != "" {
+			cred := base64.StdEncoding.EncodeToString([]byte(u.Username() + ":" + pass))
+			fmt.Fprintf(&b, "Proxy-Authorization: Basic %s\r\n", cred)
+		}
 	}
 	b.WriteString("\r\n")
 	if _, err := conn.Write([]byte(b.String())); err != nil {

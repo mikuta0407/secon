@@ -26,6 +26,7 @@ type utun struct {
 	emu  *l2.Emulator
 	in   chan []byte // utun から読んだ IPv4 パケット
 	errc chan error
+	done chan struct{} // Close で閉じる (readLoop が in への送信で止まったままにならないように)
 }
 
 // Open は utun を作成する (名前はカーネルが utunN を割り当てるので name は使わない)。
@@ -60,6 +61,7 @@ func Open(_ string, mac net.HardwareAddr, mtu int) (Device, error) {
 		emu:  l2.NewEmulator(mac),
 		in:   make(chan []byte, 256),
 		errc: make(chan error, 1),
+		done: make(chan struct{}),
 	}
 	if out, err := exec.Command("ifconfig", name, "mtu", strconv.Itoa(mtu), "up").CombinedOutput(); err != nil {
 		u.Close()
@@ -84,7 +86,11 @@ func (u *utun) readLoop() {
 		if n <= 4 || binary.BigEndian.Uint32(buf[:4]) != unix.AF_INET {
 			continue
 		}
-		u.in <- append([]byte(nil), buf[4:n]...)
+		select {
+		case u.in <- append([]byte(nil), buf[4:n]...):
+		case <-u.done:
+			return
+		}
 	}
 }
 
@@ -118,6 +124,13 @@ func (u *utun) WriteFrame(f []byte) error {
 	return err
 }
 
-func (u *utun) Close() error { return u.f.Close() }
+func (u *utun) Close() error {
+	select {
+	case <-u.done:
+	default:
+		close(u.done)
+	}
+	return u.f.Close()
+}
 
 func (u *utun) setIPv4(addr netip.Prefix, gw netip.Addr) { u.emu.SetIPv4(addr, gw) }

@@ -84,3 +84,20 @@ func TestEmulatorAnswersARP(t *testing.T) {
 		t.Fatal("unicast to other host must be dropped")
 	}
 }
+
+func TestEmulatorPendingBounded(t *testing.T) {
+	e := NewEmulator(net.HardwareAddr{0x5e, 0, 0, 0, 0, 1})
+	e.SetIPv4(netip.MustParsePrefix("10.0.0.5/16"), netip.MustParseAddr("10.0.0.1"))
+	// 応答しない多数の宛先へ送っても保留は上限で止まる
+	for i := 0; i < 1000; i++ {
+		dst := netip.AddrFrom4([4]byte{10, 0, byte(1 + i/250), byte(1 + i%250)}).String()
+		e.ToVPN(ipPacket("10.0.0.5", dst))
+		select {
+		case <-e.Out():
+		default:
+		}
+	}
+	if n := len(e.pending); n > maxPendingIPs {
+		t.Fatalf("pending destinations = %d, want <= %d", n, maxPendingIPs)
+	}
+}

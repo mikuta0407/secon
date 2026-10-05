@@ -1,7 +1,11 @@
 package i18n
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -49,5 +53,36 @@ func TestCatalogConsistency(t *testing.T) {
 				t.Errorf("%s: verb %d differs: %s vs %s", k, i, a[i], b[i])
 			}
 		}
+	}
+}
+
+// ソースコード中で使っているメッセージ key がすべてカタログにあること
+// (無い key は実行時に panic するので、GUI の画面を開くまで気づけない)。
+func TestAllUsedKeysExist(t *testing.T) {
+	use := regexp.MustCompile(`i18n\.(?:T|Errorf)\("([^"]+)"`)
+	root := "../.."
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && (d.Name() == ".git" || d.Name() == "dev") {
+			return filepath.SkipDir
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range use.FindAllStringSubmatch(string(b), -1) {
+			if _, ok := messages[m[1]]; !ok {
+				t.Errorf("%s: unknown message key %q", path, m[1])
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -35,8 +36,11 @@ type gui struct {
 	// 毎回新しい Menu を渡すと起動直後の更新が古いメニューで上書きされる (macOS で確認)。
 	menu *fyne.Menu
 
-	status    []engine.Status
+	status    []engine.Status // 最後に受け取った状態 (デーモンと切れている間も保持する)
 	daemonErr error
+	seq       uint64 // イベントを受け取るたびに増える (ポーリング結果が古くないかの判定用)
+	traySig   string // 最後に描いたトレイの内容 (変化が無ければ作り直さない)
+	opening   map[string]bool
 	manager   *managerWindow
 	editors   map[string]*profileEditor // 接続設定名 → 開いているプロパティウィンドウ (新規は含まない)
 	newEditor []*profileEditor
@@ -60,14 +64,14 @@ func main() {
 	if !ok {
 		log.Fatal("system tray is not supported on this platform")
 	}
-	g := &gui{app: a, desk: desk, client: api.NewClient(api.ClientSocket()), menu: fyne.NewMenu("secon"), poll: make(chan struct{}, 1), editors: map[string]*profileEditor{}}
+	g := &gui{app: a, desk: desk, client: api.NewClient(api.ClientSocket()), menu: fyne.NewMenu("secon"), poll: make(chan struct{}, 1), editors: map[string]*profileEditor{}, opening: map[string]bool{}}
 	a.Lifecycle().SetOnStarted(func() {
 		hideDock()
 		// トレイの初期化完了前に設定したアイコンは反映されないことがある (macOS)。
 		// 完了を知る API が無いので、起動後に少し待って描き直す
 		go func() {
 			time.Sleep(2 * time.Second)
-			fyne.Do(g.render)
+			fyne.Do(func() { g.traySig = ""; g.render() })
 		}()
 	})
 	g.render()
@@ -90,13 +94,20 @@ func (g *gui) watch() {
 	for {
 		log.Printf("connecting to daemon (%s)", g.client.Socket)
 		err := g.client.Events(context.Background(), func(st []engine.Status) {
-			fyne.Do(func() { g.apply(st, nil) })
+			fyne.Do(func() {
+				g.seq++
+				g.apply(st)
+			})
 		})
 		if err == nil {
 			err = fmt.Errorf("connection to daemon closed")
 		}
 		log.Printf("daemon: %v", err)
-		fyne.Do(func() { g.apply(nil, err) })
+		fyne.Do(func() {
+			// 状態は消さずに保持する (再接続後に変化を通知でき、編集中の画面も「削除」扱いにならない)
+			g.daemonErr = err
+			g.render()
+		})
 		time.Sleep(3 * time.Second)
 	}
 }
@@ -111,8 +122,10 @@ func (g *gui) pollLoop() {
 		case <-g.poll:
 		}
 		visible := false
+		var seq uint64
 		fyne.DoAndWait(func() {
-			visible = (g.manager != nil && g.manager.visible) || len(g.editors) > 0
+			visible = g.daemonErr == nil && ((g.manager != nil && g.manager.visible) || len(g.editors) > 0)
+			seq = g.seq
 		})
 		if !visible {
 			continue
@@ -121,7 +134,12 @@ func (g *gui) pollLoop() {
 		st, err := g.client.Status(ctx)
 		cancel()
 		if err == nil {
-			fyne.Do(func() { g.apply(st, nil) })
+			fyne.Do(func() {
+				// 取得中にイベントが来ていたら、そちらの方が新しいので捨てる
+				if g.seq == seq {
+					g.apply(st)
+				}
+			})
 		}
 	}
 }
@@ -133,16 +151,21 @@ func (g *gui) pollNow() {
 	}
 }
 
-func (g *gui) apply(st []engine.Status, err error) {
-	if err == nil {
-		g.notifyChanges(st)
-	}
-	g.status, g.daemonErr = st, err
+// apply はデーモンから受け取った状態を反映する (main goroutine で呼ぶ)。
+func (g *gui) apply(st []engine.Status) {
+	g.notifyChanges(st)
+	g.status, g.daemonErr = st, nil
 	g.render()
 	if g.manager != nil {
 		g.manager.updateStatus(st)
 	}
-	for _, e := range g.editors {
+	for name, e := range g.editors {
+		if findStatus(st, name) == nil {
+			// 削除された。同名で作り直された接続設定に古いウィンドウを使い回さないよう外す
+			delete(g.editors, name)
+			e.markDeleted()
+			continue
+		}
 		e.updateStatus(st)
 	}
 }
@@ -167,8 +190,26 @@ func (g *gui) notifyChanges(next []engine.Status) {
 	}
 }
 
-// render はトレイのメニューとアイコンを作り直す。
+// traySignature はトレイに表示する内容の要約。送受信量だけの変化ではメニューを作り直さない
+// (作り直すと開いているメニューが閉じたりちらついたりする)。
+func (g *gui) traySignature() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s|%v|", i18n.Current(), g.daemonErr)
+	if g.daemonErr == nil {
+		for _, s := range g.status {
+			fmt.Fprintf(&b, "%s/%s/%s/%s/%s/%v/%s;", s.Name, s.State, s.Mode, s.Address, s.Socks, s.Forwards, s.Error)
+		}
+	}
+	return b.String()
+}
+
+// render はトレイのメニューとアイコンを作り直す (内容が変わったときだけ)。
 func (g *gui) render() {
+	sig := g.traySignature()
+	if sig == g.traySig {
+		return
+	}
+	g.traySig = sig
 	var items []*fyne.MenuItem
 	connected := false
 
@@ -183,6 +224,9 @@ func (g *gui) render() {
 	}
 
 	for _, s := range g.status {
+		if g.daemonErr != nil {
+			break
+		}
 		if s.State == engine.StateConnected {
 			connected = true
 		}
@@ -311,21 +355,35 @@ func (g *gui) openEditor(name string) {
 		e.show()
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	ps, err := g.client.Profiles(ctx)
-	if err != nil {
-		g.app.SendNotification(fyne.NewNotification("secon", err.Error()))
+	if g.opening[name] {
 		return
 	}
-	for _, p := range ps {
-		if p.Name == name {
-			e := newProfileEditor(g, &p)
-			g.editors[name] = e
-			e.show()
-			return
-		}
-	}
+	g.opening[name] = true
+	// デーモンの応答待ちで UI を止めないよう、取得はバックグラウンドで行う
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ps, err := g.client.Profiles(ctx)
+		fyne.Do(func() {
+			delete(g.opening, name)
+			if err != nil {
+				g.app.SendNotification(fyne.NewNotification("secon", err.Error()))
+				return
+			}
+			if e, ok := g.editors[name]; ok {
+				e.show()
+				return
+			}
+			for _, p := range ps {
+				if p.Name == name {
+					e := newProfileEditor(g, &p)
+					g.editors[name] = e
+					e.show()
+					return
+				}
+			}
+		})
+	}()
 }
 
 func (g *gui) closeEditor(e *profileEditor) {

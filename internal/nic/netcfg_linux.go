@@ -8,6 +8,7 @@ import (
 	"os/exec"
 
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 func linkSetup(name string, mac net.HardwareAddr, mtu int) error {
@@ -52,8 +53,13 @@ func Apply(dev Device, s Settings, logf func(string, ...any)) (Undo, error) {
 	}
 	undos = append(undos, func() { netlink.AddrDel(link, addr) })
 
+	// 既存の経路は上書きしない (切断時に消すと元の経路が失われるため)。同じ宛先が既にあればそのまま使う
 	addRoute := func(r *netlink.Route) error {
-		if err := netlink.RouteReplace(r); err != nil {
+		if err := netlink.RouteAdd(r); err != nil {
+			if errors.Is(err, unix.EEXIST) {
+				logf("route %s already exists; leaving it as is", r.Dst)
+				return nil
+			}
 			return fmt.Errorf("add route %s: %w", r.Dst, err)
 		}
 		undos = append(undos, func() { netlink.RouteDel(r) })
@@ -65,13 +71,16 @@ func Apply(dev Device, s Settings, logf func(string, ...any)) (Undo, error) {
 			return fail(errors.New("default_gateway: DHCP did not provide a router"))
 		}
 		// VPN サーバへの経路を元の経路に固定してから 0/1 と 128/1 を奪う
-		if s.Bypass.IsValid() && !s.Bypass.IsLoopback() {
-			rs, err := netlink.RouteGet(s.Bypass.AsSlice())
+		for _, b := range s.Bypass {
+			rs, err := netlink.RouteGet(b.AsSlice())
 			if err != nil || len(rs) == 0 {
-				return fail(fmt.Errorf("lookup route to %s: %v", s.Bypass, err))
+				return fail(fmt.Errorf("lookup route to %s: %v", b, err))
 			}
 			orig := rs[0]
-			bypass := &netlink.Route{Dst: ipNet(netip.PrefixFrom(s.Bypass, 32)), Gw: orig.Gw, LinkIndex: orig.LinkIndex}
+			if orig.Gw == nil {
+				continue // 直結のサブネット上にある (より細かい経路があるので 0/1・128/1 に取られない)
+			}
+			bypass := &netlink.Route{Dst: ipNet(netip.PrefixFrom(b, 32)), Gw: orig.Gw, LinkIndex: orig.LinkIndex}
 			if err := addRoute(bypass); err != nil {
 				return fail(err)
 			}
@@ -84,7 +93,7 @@ func Apply(dev Device, s Settings, logf func(string, ...any)) (Undo, error) {
 	}
 	for _, p := range s.Routes {
 		r := &netlink.Route{Dst: ipNet(p), LinkIndex: link.Attrs().Index}
-		if s.Gateway.IsValid() && !s.Address.Contains(p.Addr()) {
+		if s.Gateway.IsValid() && viaGateway(s.Address, p) {
 			r.Gw = s.Gateway.AsSlice()
 		}
 		if err := addRoute(r); err != nil {
@@ -129,3 +138,6 @@ func setDNS(ifname string, servers []netip.Addr, domains []string, defaultRoute 
 	}
 	return nil
 }
+
+// CleanupStale は前回の異常終了で残った設定を消す (Linux は TAP と共に消えるので何もしない)。
+func CleanupStale(logf func(string, ...any)) {}

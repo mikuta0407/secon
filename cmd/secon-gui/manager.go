@@ -23,6 +23,8 @@ type managerWindow struct {
 
 	status   []engine.Status
 	selected string
+	selRow   int    // 表で選択表示になっている行 (-1 は無し)。selected と食い違わないよう同期する
+	pending  string // 保存直後で、まだ状態一覧に現れていない選択対象
 
 	table   *widget.Table
 	details *detailsView
@@ -55,7 +57,7 @@ func bytesOrDash(s engine.Status, n uint64) string {
 }
 
 func newManagerWindow(g *gui) *managerWindow {
-	m := &managerWindow{g: g}
+	m := &managerWindow{g: g, selRow: -1}
 	m.w = g.app.NewWindow("")
 	m.w.SetCloseIntercept(func() { m.visible = false; m.w.Hide() })
 	m.build()
@@ -91,10 +93,13 @@ func (m *managerWindow) build() {
 	}
 	m.table.OnSelected = func(id widget.TableCellID) {
 		if id.Row >= 0 && id.Row < len(m.status) {
+			m.selRow = id.Row
 			m.selected = m.status[id.Row].Name
+			m.pending = ""
 			m.refresh()
 		}
 	}
+	m.selRow = -1
 
 	m.connectBtn = widget.NewButtonWithIcon(i18n.T("btn.connect"), theme.MediaPlayIcon(), func() { m.g.connect(m.selected) })
 	m.disconnectBtn = widget.NewButtonWithIcon(i18n.T("btn.disconnect"), theme.MediaStopIcon(), func() { m.g.disconnect(m.selected) })
@@ -111,6 +116,7 @@ func (m *managerWindow) build() {
 	split := container.NewVSplit(m.table, detailPane)
 	split.Offset = 0.45
 	m.w.SetContent(container.NewBorder(container.NewVBox(toolbar, widget.NewSeparator()), nil, nil, nil, split))
+	m.syncSelection()
 	m.refresh()
 }
 
@@ -124,13 +130,43 @@ func (m *managerWindow) show() {
 
 func (m *managerWindow) updateStatus(st []engine.Status) {
 	m.status = st
-	if m.selected == "" || findStatus(st, m.selected) == nil {
+	if findStatus(st, m.selected) != nil {
+		if m.selected == m.pending {
+			m.pending = ""
+		}
+	} else if m.selected == "" || m.selected != m.pending {
 		m.selected = ""
 		if len(st) > 0 {
 			m.selected = st[0].Name
 		}
 	}
+	m.syncSelection()
 	m.refresh()
+}
+
+// selectName は name を選択する (保存直後で一覧にまだ無くても、現れたときに選択される)。
+func (m *managerWindow) selectName(name string) {
+	m.selected, m.pending = name, name
+	m.updateStatus(m.status)
+}
+
+// syncSelection は表の選択表示を m.selected に合わせる。
+func (m *managerWindow) syncSelection() {
+	row := -1
+	for i, s := range m.status {
+		if s.Name == m.selected {
+			row = i
+		}
+	}
+	if row == m.selRow {
+		return
+	}
+	m.selRow = row
+	if row < 0 {
+		m.table.UnselectAll()
+		return
+	}
+	m.table.Select(widget.TableCellID{Row: row, Col: 0})
 }
 
 func (m *managerWindow) refresh() {
@@ -165,10 +201,13 @@ func (m *managerWindow) remove() {
 		if !ok {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := m.g.client.DeleteProfile(ctx, name); err != nil {
-			dialog.ShowError(err, m.w)
-		}
+		// デーモンは接続の切断を待ってから応答するので、UI を止めないようバックグラウンドで送る
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			if err := m.g.client.DeleteProfile(ctx, name); err != nil {
+				fyne.Do(func() { dialog.ShowError(err, m.w) })
+			}
+		}()
 	}, m.w)
 }

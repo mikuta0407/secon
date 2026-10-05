@@ -2,8 +2,12 @@
 package api
 
 import (
+	"errors"
+	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // SystemSocket は root で動くデーモンのソケット。
@@ -35,10 +39,21 @@ func ClientSocket() string {
 	if s := os.Getenv("SECON_SOCKET"); s != "" {
 		return s
 	}
-	if _, err := os.Stat(SystemSocket); err == nil {
+	if _, err := os.Stat(SystemSocket); err != nil {
+		return UserSocket()
+	}
+	// root デーモンが異常終了するとソケットファイルだけ残るので、実際に繋がるか確かめる
+	c, err := net.DialTimeout("unix", SystemSocket, time.Second)
+	if err == nil {
+		c.Close()
 		return SystemSocket
 	}
-	return UserSocket()
+	if !errors.Is(err, fs.ErrPermission) {
+		if _, err := os.Stat(UserSocket()); err == nil {
+			return UserSocket()
+		}
+	}
+	return SystemSocket // 権限エラーなどはそのまま案内する
 }
 
 // errorBody はエラー応答。

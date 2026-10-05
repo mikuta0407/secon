@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mikuta0407/secon/internal/forward"
 )
 
 // Dialer は宛先への接続手段 (VPN 側)。
@@ -120,15 +122,7 @@ func (s *Server) handle(c net.Conn) error {
 	c.SetDeadline(time.Time{})
 
 	// クライアントが既に送ってきたデータ (r にバッファ済み) も含めて中継する
-	done := make(chan struct{})
-	go func() {
-		io.Copy(dst, r)
-		closeWrite(dst)
-		close(done)
-	}()
-	io.Copy(c, dst)
-	closeWrite(c)
-	<-done
+	forward.PipeReader(c, r, dst)
 	return nil
 }
 
@@ -267,12 +261,4 @@ func replyCode(err error) byte {
 		return repHostUnreachable
 	}
 	return repGeneralFailure
-}
-
-func closeWrite(c net.Conn) {
-	if cw, ok := c.(interface{ CloseWrite() error }); ok {
-		cw.CloseWrite()
-	} else {
-		c.Close()
-	}
 }

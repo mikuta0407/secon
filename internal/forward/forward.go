@@ -55,15 +55,30 @@ func Serve(ln net.Listener, d Dialer, target string, logf func(string, ...any)) 
 }
 
 // Pipe は a と b を双方向に中継し、両方向が終わるまで待つ。
+// 片方向が EOF で終わったら相手に FIN だけ送り (half-close)、エラーで終わったら両方閉じる
+// (相手が half-close を無視して黙ったままだと、もう片方向がいつまでも終わらないため)。
 func Pipe(a, b net.Conn) {
+	PipeReader(a, a, b)
+}
+
+// PipeReader は a からの読み込みに ra を使う Pipe (a の手前でバッファした分を含めて送るため)。
+func PipeReader(a net.Conn, ra io.Reader, b net.Conn) {
 	done := make(chan struct{})
 	go func() {
-		io.Copy(b, a)
+		defer close(done)
+		if _, err := io.Copy(b, ra); err != nil {
+			a.Close()
+			b.Close()
+			return
+		}
 		closeWrite(b)
-		close(done)
 	}()
-	io.Copy(a, b)
-	closeWrite(a)
+	if _, err := io.Copy(a, b); err != nil {
+		a.Close()
+		b.Close()
+	} else {
+		closeWrite(a)
+	}
 	<-done
 }
 

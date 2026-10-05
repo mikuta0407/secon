@@ -15,6 +15,8 @@ import (
 	"github.com/mikuta0407/secon/internal/api"
 	"github.com/mikuta0407/secon/internal/config"
 	"github.com/mikuta0407/secon/internal/engine"
+	"github.com/mikuta0407/secon/internal/i18n"
+	"github.com/mikuta0407/secon/internal/nic"
 )
 
 func runDaemon(args []string) error {
@@ -23,9 +25,12 @@ func runDaemon(args []string) error {
 	socket := fs.String("socket", "", "制御ソケット (既定: 設定ファイルの api.socket か "+api.DefaultSocket()+")")
 	fs.Parse(args)
 
+	// 設定ファイルに誤りがあっても起動する (起動失敗→再起動を繰り返さないように)。
+	// その場合は接続設定なしで動き、修正後の 'secon reload' で反映する
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		return err
+		log.Printf("config: %v (starting without profiles; fix it and run 'secon reload')", err)
+		cfg = &config.Config{}
 	}
 	if *socket == "" {
 		*socket = cfg.API.Socket
@@ -41,16 +46,19 @@ func runDaemon(args []string) error {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
 	log.Printf("secon daemon starting (config %s, socket %s)", *cfgPath, *socket)
 
-	m := engine.NewManager()
-	defer m.Close()
-	m.Apply(cfg)
-
+	// 先にソケットを確保する。別のデーモンが動いていたら、接続を始める前にここで終わる
 	ln, err := api.Listen(*socket, group)
 	if err != nil {
 		return err
 	}
 	defer os.Remove(*socket)
+
+	nic.CleanupStale(log.Printf) // 前回の異常終了で残った DNS 設定など
+	m := engine.NewManager()
+	defer m.Close()
 	store := &configStore{path: *cfgPath, cfg: cfg, m: m}
+	m.Apply(cfg)
+
 	srv := &api.Server{Manager: m, Store: store, Reload: store.reload}
 	go func() {
 		if err := srv.Serve(ln); err != nil {
@@ -85,53 +93,65 @@ type configStore struct {
 	cfg *config.Config
 }
 
+// reload は設定ファイルを読み直して反映する。保存 (update) と同じロックの中で行い、
+// 読み込みと反映の間に保存が割り込んで古い設定に戻ることを防ぐ。
 func (s *configStore) reload() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	c, err := config.Load(s.path)
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
 	s.cfg = c
-	s.mu.Unlock()
 	s.m.Apply(c)
 	log.Printf("config reloaded")
 	return nil
 }
 
+// Profiles はパスワードを伏せた接続設定の一覧 (API で返す)。
 func (s *configStore) Profiles() []config.Profile {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]config.Profile(nil), s.cfg.Profiles...)
+	out := make([]config.Profile, 0, len(s.cfg.Profiles))
+	for _, p := range s.cfg.Profiles {
+		out = append(out, p.Redacted())
+	}
+	return out
 }
 
-// update は設定を変更して検証・保存・反映する。
+// update は設定ファイルを読み直したうえで変更し、検証・保存・反映する。
+// メモリ上の設定から書き出すと、手で編集してまだ reload していない内容を消してしまうため。
 func (s *configStore) update(f func(c *config.Config) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	next := *s.cfg
-	next.Profiles = append([]config.Profile(nil), s.cfg.Profiles...)
-	if err := f(&next); err != nil {
+	next, err := config.Load(s.path)
+	if err != nil {
+		return i18n.Errorf("cfg.fileError", err)
+	}
+	if err := f(next); err != nil {
 		return err
 	}
 	if err := next.Validate(); err != nil {
 		return err
 	}
-	if err := config.Save(s.path, &next); err != nil {
+	if err := config.Save(s.path, next); err != nil {
 		return err
 	}
-	s.cfg = &next
-	s.m.Apply(&next)
+	s.cfg = next
+	s.m.Apply(next)
 	return nil
 }
 
 func (s *configStore) PutProfile(oldName string, p config.Profile) error {
 	return s.update(func(c *config.Config) error {
 		if oldName == "" {
+			p.KeepPasswords(nil)
 			c.Profiles = append(c.Profiles, p)
 			return nil
 		}
 		for i := range c.Profiles {
 			if c.Profiles[i].Name == oldName {
+				p.KeepPasswords(&c.Profiles[i])
 				c.Profiles[i] = p
 				return nil
 			}

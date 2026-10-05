@@ -89,3 +89,46 @@ func TestStaticValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateRejectsUnsafeValues(t *testing.T) {
+	base := Profile{Name: "x", Server: "s", Hub: "h", User: "u"}
+	bad := []func(p *Profile){
+		func(p *Profile) { p.NIC.DNSDomains = []string{"corp\nremove State:/Network/Global/IPv4"} }, // scutil への注入
+		func(p *Profile) { p.NIC.DNSDomains = []string{"a b"} },
+		func(p *Profile) { p.NIC.Routes = []string{"fd00::/8"} }, // IPv6 は未対応
+		func(p *Profile) { p.Socks.Password = "pw" },             // ユーザ名なしは認証が無効になる
+		func(p *Profile) { p.Proxy = "http://proxy.example.com" },
+	}
+	for i, f := range bad {
+		p := base
+		f(&p)
+		if err := p.Normalize(); err == nil {
+			t.Errorf("case %d: expected error for %+v", i, p)
+		}
+	}
+	ok := base
+	ok.NIC.DNSDomains = []string{"corp.example", "example.com."}
+	ok.Proxy = "http://user:pass@proxy.example.com:8080"
+	if err := ok.Normalize(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestRedactAndKeepPasswords(t *testing.T) {
+	old := Profile{Name: "x", Password: "secret", Socks: Socks{Username: "s", Password: "spw"}}
+	r := old.Redacted()
+	if r.Password != "" || !r.PasswordSet || r.Socks.Password != "" || !r.Socks.PasswordSet {
+		t.Fatalf("not redacted: %+v", r)
+	}
+	// GUI が空欄のまま送り返したら保存済みを引き継ぐ
+	r.KeepPasswords(&old)
+	if r.Password != "secret" || r.Socks.Password != "spw" || r.PasswordSet || r.Socks.PasswordSet {
+		t.Errorf("keep failed: %+v", r)
+	}
+	// 新しいパスワードを入れたらそちらを使う
+	n := Profile{Name: "x", Password: "new", PasswordSet: false}
+	n.KeepPasswords(&old)
+	if n.Password != "new" {
+		t.Errorf("new password replaced: %+v", n)
+	}
+}

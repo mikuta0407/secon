@@ -39,7 +39,10 @@ jobs:
             goos: linux
             goarch: arm64
     steps:
+      # 手動実行でもタグの内容をビルドする (実行したブランチの HEAD ではなく)
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

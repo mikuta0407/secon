@@ -24,7 +24,7 @@ type Settings struct {
 	MTU            int
 	Routes         []netip.Prefix // VPN 経由にする宛先
 	DefaultGateway bool           // VPN をデフォルトゲートウェイにする
-	Bypass         netip.Addr     // DefaultGateway 時に元の経路で送る宛先 (VPN サーバ/プロキシ)
+	Bypass         []netip.Addr   // DefaultGateway 時に元の経路で送る宛先 (VPN サーバとプロキシ)
 	DNS            []netip.Addr   // 空なら DNS を設定しない
 	DNSDomains     []string       // この DNS で解決するドメイン (DefaultGateway 時は全ドメイン)
 }
@@ -47,6 +47,12 @@ func InterfaceName(profile string) string {
 var halfDefaults = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/1"),
 	netip.MustParsePrefix("128.0.0.0/1"),
+}
+
+// viaGateway は経路 p を VPN 側ゲートウェイ経由にすべきか。
+// p が自分のサブネットに収まる (サブネット以下の広さ) ならゲートウェイ不要 (直接届く)。
+func viaGateway(addr netip.Prefix, p netip.Prefix) bool {
+	return !(addr.Masked().Contains(p.Addr()) && p.Bits() >= addr.Bits())
 }
 
 // HostAddr は net.Addr から IP を取り出す。

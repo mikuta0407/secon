@@ -14,3 +14,5 @@ func Open(name string, mac net.HardwareAddr, mtu int) (Device, error) { return n
 func Apply(dev Device, s Settings, logf func(string, ...any)) (Undo, error) {
 	return nil, errUnsupported
 }
+
+func CleanupStale(logf func(string, ...any)) {}

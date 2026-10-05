@@ -121,9 +121,13 @@ func (m *Manager) get(name string) (*runner, error) {
 
 // Connect はプロファイルを接続状態にする (既に接続中なら何もしない)。
 func (m *Manager) Connect(name string) error {
-	r, err := m.get(name)
-	if err != nil {
-		return err
+	// 取得と開始をロック内で行う。間に Apply が入って置き換え済みの古い runner を
+	// 開始してしまうと、どこからも止められなくなるため (start は待たないのでロック内で安全)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.profiles[name]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrNoProfile, name)
 	}
 	r.start()
 	return nil

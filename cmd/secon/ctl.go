@@ -92,26 +92,40 @@ func runConnect(args []string) error {
 	c, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cl := client()
+	// この時刻より前のエラー (前回の試行の結果) で失敗と判定しないため
+	t0 := time.Now().Add(-time.Second)
 	if err := cl.Connect(c, args[0]); err != nil {
 		return err
 	}
-	// 接続完了 (またはエラー) まで待つ
+	// 接続完了 (またはこのあとに起きたエラー) まで待つ
 	var final *engine.Status
 	err := cl.Events(c, func(st []engine.Status) {
 		for _, s := range st {
-			if s.Name == args[0] && (s.State == engine.StateConnected || s.State == engine.StateFailed || s.Error != "") {
+			if s.Name != args[0] {
+				continue
+			}
+			done := s.State == engine.StateConnected ||
+				(s.State == engine.StateFailed || s.State == engine.StateReconnecting && s.Error != "") && s.Since.After(t0)
+			if done {
 				final = &s
 				cancel()
 			}
 		}
 	})
 	if final == nil {
-		if err == nil || c.Err() != nil {
+		switch {
+		case c.Err() != nil:
 			return i18n.Errorf("cli.waitTimeout")
+		case err == nil:
+			return i18n.Errorf("cli.streamClosed")
 		}
 		return err
 	}
-	if final.State != engine.StateConnected {
+	switch final.State {
+	case engine.StateConnected:
+	case engine.StateFailed:
+		return i18n.Errorf("cli.connectStopped", final.Name, final.Error)
+	default:
 		return i18n.Errorf("cli.connectFailed", final.State, final.Error, final.Name)
 	}
 	fmt.Println(i18n.T("cli.connected", final.Name, final.Address))

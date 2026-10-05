@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/mikuta0407/secon/internal/config"
@@ -81,7 +82,7 @@ func runNICMode(ctx context.Context, r *runner, sess *proto.Session) error {
 		defer func() { dhcp.Release(lease) }()
 	}
 
-	settings := nicSettings(p, lease, sess.RemoteAddr())
+	settings := nicSettings(p, lease, bypassAddrs(ctx, p, sess.RemoteAddr()))
 	undo, err := nic.Apply(dev, settings, r.logf)
 	if err != nil {
 		return err
@@ -90,11 +91,11 @@ func runNICMode(ctx context.Context, r *runner, sess *proto.Session) error {
 
 	r.dialer.Store(&dialerBox{&net.Dialer{}})
 	defer r.dialer.Store(nil)
-	r.connected(sess, dev.Name(), lease.IP.String(), lease.Router.String(), addrStrings(lease.DNS))
+	r.connected(sess, dev.Name(), lease.IP.String(), addrString(lease.Router), addrStrings(lease.DNS))
 	r.logf("nic %s: %s gw %s routes %v default_gateway=%v", dev.Name(), lease.IP, lease.Router, settings.Routes, settings.DefaultGateway)
 
 	for {
-		if lease.LeaseTime > 0 {
+		if lease.Renewable() {
 			renew = time.After(time.Until(lease.RenewAt()))
 		}
 		select {
@@ -103,7 +104,8 @@ func runNICMode(ctx context.Context, r *runner, sess *proto.Session) error {
 		case err := <-errc:
 			return err
 		case <-renew:
-			rctx, cancel := context.WithTimeout(ctx, lease.LeaseTime/4)
+			// T1 からリース期限まで再送を続ける (一時的に DHCP サーバが応答しなくても切断しない)
+			rctx, cancel := context.WithDeadline(ctx, lease.Expires())
 			nl, err := dhcp.Renew(rctx, lease)
 			cancel()
 			if err != nil {
@@ -133,13 +135,46 @@ func staticLease(s config.Static) *l2.Lease {
 	return l
 }
 
-func nicSettings(p config.Profile, l *l2.Lease, remote net.Addr) nic.Settings {
+// bypassAddrs は default_gateway 時に元の経路で送る宛先。接続先 (直結ならサーバ、プロキシ経由なら
+// プロキシ) に加え、プロキシ経由なら VPN サーバ自体も含める (ローカルのプロキシが VPN 内を通らないように)。
+func bypassAddrs(ctx context.Context, p config.Profile, remote net.Addr) []netip.Addr {
+	if !p.NIC.DefaultGateway {
+		return nil
+	}
+	var out []netip.Addr
+	add := func(a netip.Addr) {
+		a = a.Unmap()
+		if a.Is4() && !a.IsLoopback() && !slices.Contains(out, a) {
+			out = append(out, a)
+		}
+	}
+	add(nic.HostAddr(remote))
+	if p.Proxy != "" {
+		host, _, _ := net.SplitHostPort(p.Server)
+		rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		ips, _ := net.DefaultResolver.LookupNetIP(rctx, "ip4", host)
+		cancel()
+		for _, ip := range ips {
+			add(ip)
+		}
+	}
+	return out
+}
+
+func addrString(a netip.Addr) string {
+	if !a.IsValid() {
+		return ""
+	}
+	return a.String()
+}
+
+func nicSettings(p config.Profile, l *l2.Lease, bypass []netip.Addr) nic.Settings {
 	s := nic.Settings{
 		Address:        l.IP,
 		Gateway:        l.Router,
 		MTU:            l.MTU,
 		DefaultGateway: p.NIC.DefaultGateway,
-		Bypass:         nic.HostAddr(remote),
+		Bypass:         bypass,
 	}
 	for _, r := range p.NIC.Routes {
 		s.Routes = append(s.Routes, netip.MustParsePrefix(r).Masked())

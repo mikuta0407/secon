@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -35,12 +36,15 @@ type API struct {
 
 // Profile は 1 つの VPN 接続設定。
 type Profile struct {
-	Name        string `toml:"name" json:"name"`
-	Server      string `toml:"server" json:"server"` // host:port (port 省略時 443)
-	Hub         string `toml:"hub" json:"hub"`
-	User        string `toml:"user" json:"user"`
-	Password    string `toml:"password,omitempty" json:"password,omitempty"` // 空なら匿名認証
-	Mode        string `toml:"mode,omitempty" json:"mode,omitempty"`         // "socks" | "nic"
+	Name     string `toml:"name" json:"name"`
+	Server   string `toml:"server" json:"server"` // host:port (port 省略時 443)
+	Hub      string `toml:"hub" json:"hub"`
+	User     string `toml:"user" json:"user"`
+	Password string `toml:"password,omitempty" json:"password,omitempty"` // 空なら匿名認証
+	// PasswordSet は API 専用 (ファイルには書かない)。GET ではパスワードを返さずこれを true にし、
+	// PUT で Password が空かつ true なら保存済みのパスワードを引き継ぐ
+	PasswordSet bool   `toml:"-" json:"password_set,omitempty"`
+	Mode        string `toml:"mode,omitempty" json:"mode,omitempty"` // "socks" | "nic"
 	AutoConnect bool   `toml:"auto_connect,omitempty" json:"auto_connect,omitempty"`
 
 	// サーバ証明書の検証。CertSHA256 があればピン留め、Insecure なら検証しない、どちらも無ければ OS の信頼ストア
@@ -66,9 +70,10 @@ type Static struct {
 func (s Static) Enabled() bool { return s.Address != "" }
 
 type Socks struct {
-	Listen   string `toml:"listen,omitempty" json:"listen,omitempty"` // 既定 127.0.0.1:1080
-	Username string `toml:"username,omitempty" json:"username,omitempty"`
-	Password string `toml:"password,omitempty" json:"password,omitempty"`
+	Listen      string `toml:"listen,omitempty" json:"listen,omitempty"` // 既定 127.0.0.1:1080
+	Username    string `toml:"username,omitempty" json:"username,omitempty"`
+	Password    string `toml:"password,omitempty" json:"password,omitempty"`
+	PasswordSet bool   `toml:"-" json:"password_set,omitempty"` // Profile.PasswordSet と同じ扱い
 }
 
 type NIC struct {
@@ -112,6 +117,31 @@ func (s Static) validate() error {
 		}
 	}
 	return nil
+}
+
+var domainRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?$`)
+
+// Redacted はパスワードを伏せた写し (API で返す用)。
+func (p Profile) Redacted() Profile {
+	if p.Password != "" {
+		p.Password, p.PasswordSet = "", true
+	}
+	if p.Socks.Password != "" {
+		p.Socks.Password, p.Socks.PasswordSet = "", true
+	}
+	p.Forwards = append([]Forward(nil), p.Forwards...)
+	return p
+}
+
+// KeepPasswords は API から受け取った p で、伏せたまま (PasswordSet) のパスワードを old から引き継ぐ。
+func (p *Profile) KeepPasswords(old *Profile) {
+	if p.Password == "" && p.PasswordSet && old != nil {
+		p.Password = old.Password
+	}
+	if p.Socks.Password == "" && p.Socks.PasswordSet && old != nil {
+		p.Socks.Password = old.Socks.Password
+	}
+	p.PasswordSet, p.Socks.PasswordSet = false, false
 }
 
 // DefaultPath は既定の設定ファイルパス。
@@ -191,7 +221,7 @@ func (p *Profile) Normalize() error {
 	p.CertSHA256 = strings.ToLower(strings.ReplaceAll(p.CertSHA256, ":", ""))
 	if p.Proxy != "" {
 		u, err := url.Parse(p.Proxy)
-		if err != nil || u.Scheme != "http" || u.Host == "" {
+		if err != nil || u.Scheme != "http" || u.Hostname() == "" || u.Port() == "" {
 			return i18n.Errorf("cfg.invalidProxy", p.Proxy)
 		}
 	}
@@ -202,9 +232,18 @@ func (p *Profile) Normalize() error {
 		return err
 	}
 	for _, r := range p.NIC.Routes {
-		if _, err := netip.ParsePrefix(r); err != nil {
+		if pr, err := netip.ParsePrefix(r); err != nil || !pr.Addr().Is4() {
 			return i18n.Errorf("cfg.invalidRoute", r)
 		}
+	}
+	for _, d := range p.NIC.DNSDomains {
+		// macOS では scutil に、Linux では resolvectl に渡すので、ホスト名の文字以外は受け付けない
+		if !domainRe.MatchString(d) {
+			return i18n.Errorf("cfg.invalidDNSDomain", d)
+		}
+	}
+	if p.Socks.Username == "" && (p.Socks.Password != "" || p.Socks.PasswordSet) {
+		return i18n.Errorf("cfg.socksPasswordNeedsUser")
 	}
 	for _, f := range p.Forwards {
 		if _, _, err := net.SplitHostPort(f.Listen); err != nil {

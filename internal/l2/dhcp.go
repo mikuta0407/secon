@@ -28,6 +28,12 @@ type Lease struct {
 // RenewAt は T1 (リース時間の 1/2) の時刻。
 func (l *Lease) RenewAt() time.Time { return l.Acquired.Add(l.LeaseTime / 2) }
 
+// Expires はリースの期限。
+func (l *Lease) Expires() time.Time { return l.Acquired.Add(l.LeaseTime) }
+
+// Renewable は更新が必要か (リース時間 0 = 固定アドレスや無期限なら更新しない)。
+func (l *Lease) Renewable() bool { return l.LeaseTime > 0 }
+
 // DHCPClient は Ethernet フレームレベルで動く DHCPv4 クライアント。
 // 受信フレームは HandleFrame に渡し、送信は send 関数で行う。
 type DHCPClient struct {

@@ -58,7 +58,12 @@ func Apply(dev Device, s Settings, logf func(string, ...any)) (Undo, error) {
 		if kind == "-host" {
 			target = dst.Addr().String()
 		}
-		if err := run("route", append([]string{"-n", "add", kind, target}, gwArgs...)...); err != nil {
+		err := run("route", append([]string{"-n", "add", kind, target}, gwArgs...)...)
+		if err != nil && strings.Contains(err.Error(), "File exists") {
+			// 前回の異常終了で残った経路など。張り替えて使う
+			err = run("route", append([]string{"-n", "change", kind, target}, gwArgs...)...)
+		}
+		if err != nil {
 			return err
 		}
 		undos = append(undos, func() { run("route", "-n", "delete", kind, target) })
@@ -74,12 +79,15 @@ func Apply(dev Device, s Settings, logf func(string, ...any)) (Undo, error) {
 		if !s.Gateway.IsValid() {
 			return fail(errors.New("default_gateway: DHCP did not provide a router"))
 		}
-		if s.Bypass.IsValid() && !s.Bypass.IsLoopback() {
-			gw, err := currentGateway(s.Bypass)
+		for _, b := range s.Bypass {
+			gw, err := currentGateway(b)
 			if err != nil {
 				return fail(err)
 			}
-			if err := addRoute(netip.PrefixFrom(s.Bypass, 32), gw...); err != nil {
+			if gw == nil {
+				continue // 直結のサブネット上にある (より細かい経路があるので 0/1・128/1 に取られない)
+			}
+			if err := addRoute(netip.PrefixFrom(b, 32), gw...); err != nil {
 				return fail(err)
 			}
 		}
@@ -97,7 +105,7 @@ func Apply(dev Device, s Settings, logf func(string, ...any)) (Undo, error) {
 	}
 
 	if len(s.DNS) > 0 {
-		key := "State:/Network/Service/secon-" + name + "/DNS"
+		key := dnsKeyPrefix + name + "/DNS"
 		if err := setDNS(key, s.DNS, s.DNSDomains, s.DefaultGateway); err != nil {
 			logf("dns: %v (skipped)", err)
 		} else {
@@ -108,6 +116,7 @@ func Apply(dev Device, s Settings, logf func(string, ...any)) (Undo, error) {
 }
 
 // currentGateway は dst への現在の経路の次ホップを route add 用の引数で返す。
+// 直結のサブネット上なら nil。
 func currentGateway(dst netip.Addr) ([]string, error) {
 	out, err := exec.Command("route", "-n", "get", dst.String()).Output()
 	if err != nil {
@@ -128,10 +137,10 @@ func currentGateway(dst netip.Addr) ([]string, error) {
 		}
 	}
 	switch {
-	case gw != "":
+	case gw != "" && !strings.Contains(gw, ":") && net.ParseIP(gw) != nil:
 		return []string{gw}, nil
 	case ifname != "":
-		return []string{"-interface", ifname}, nil
+		return nil, nil // gateway が無い・MAC アドレス (link#N) = 直結
 	}
 	return nil, fmt.Errorf("no route to %s", dst)
 }
@@ -177,4 +186,28 @@ func scutil(script string) error {
 		return fmt.Errorf("scutil: %v: %s", err, out)
 	}
 	return nil
+}
+
+const dnsKeyPrefix = "State:/Network/Service/secon-"
+
+// CleanupStale は前回の異常終了で残った DNS 設定を消す。デーモン起動時に呼ぶ。
+// (default_gateway 時の DNS 設定が残ると、すべての名前解決が届かない VPN 側 DNS に向いたままになる)
+func CleanupStale(logf func(string, ...any)) {
+	cmd := exec.Command("scutil")
+	cmd.Stdin = strings.NewReader("list State:/Network/Service/secon-.*\n")
+	out, err := cmd.Output()
+	if err != nil {
+		return
+	}
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	for sc.Scan() {
+		// 形式: "  subKey [0] = State:/Network/Service/secon-utun4/DNS"
+		_, key, ok := strings.Cut(sc.Text(), "= ")
+		if !ok || !strings.HasPrefix(key, dnsKeyPrefix) {
+			continue
+		}
+		if err := scutil("remove " + key + "\n"); err == nil {
+			logf("removed stale DNS setting %s", key)
+		}
+	}
 }

@@ -112,11 +112,16 @@ func Handshake(conn net.Conn, cfg LoginConfig) (*Session, *Hello, error) {
 	}
 	var wp *Pack
 	for i := 0; ; i++ {
+		// RADIUS 認証などで時間がかかるとサーバは noop を送ってくる。受信ごとにタイムアウトを延ばす
+		conn.SetDeadline(time.Now().Add(connectingTimeout))
 		if wp, err = readPackResponse(br); err != nil {
 			return nil, nil, fmt.Errorf("welcome: %w", err)
 		}
-		if wp.GetInt("noop") != 2 || i >= maxNoop {
+		if wp.GetInt("noop") != 2 {
 			break
+		}
+		if i >= maxNoop {
+			return nil, nil, errors.New("welcome: authentication did not finish (too many noop packets)")
 		}
 	}
 	if code := wp.GetInt("error"); code != 0 {

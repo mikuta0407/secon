@@ -11,6 +11,9 @@ import (
 
 const (
 	maxPendingPerIP = 16
+	maxPendingIPs   = 256             // 解決待ちの宛先数の上限 (応答しない宛先へのスキャン等でメモリを使い切らない)
+	pendingTimeout  = 3 * time.Second // これ以上応答が無い宛先の保留パケットは捨てる
+	maxARPEntries   = 4096
 	arpRetry        = time.Second
 	arpRefresh      = 10 * time.Minute
 )
@@ -26,7 +29,8 @@ type Emulator struct {
 	gw      netip.Addr
 	arp     map[netip.Addr]arpEntry
 	pending map[netip.Addr][][]byte
-	asked   map[netip.Addr]time.Time
+	asked   map[netip.Addr]time.Time // ARP 要求を最後に送った時刻
+	since   map[netip.Addr]time.Time // 保留を始めた時刻
 }
 
 type arpEntry struct {
@@ -41,6 +45,7 @@ func NewEmulator(mac net.HardwareAddr) *Emulator {
 		arp:     map[netip.Addr]arpEntry{},
 		pending: map[netip.Addr][][]byte{},
 		asked:   map[netip.Addr]time.Time{},
+		since:   map[netip.Addr]time.Time{},
 	}
 }
 
@@ -94,13 +99,15 @@ func (e *Emulator) handleARP(a []byte) {
 	var flush [][]byte
 	if spa.IsValid() && !spa.IsUnspecified() {
 		// 要求・応答・Gratuitous ARP のいずれからも学習する
+		if _, known := e.arp[spa]; !known && len(e.arp) >= maxARPEntries {
+			e.evictOldestARP()
+		}
 		e.arp[spa] = arpEntry{mac: sha, seen: time.Now()}
 		if q := e.pending[spa]; len(q) > 0 {
 			for _, pkt := range q {
 				flush = append(flush, e.frame(sha, pkt))
 			}
-			delete(e.pending, spa)
-			delete(e.asked, spa)
+			e.dropPending(spa)
 		}
 	}
 	e.mu.Unlock()
@@ -128,7 +135,7 @@ func (e *Emulator) ToVPN(pkt []byte) []byte {
 		return nil
 	}
 	switch {
-	case dst == netip.AddrFrom4([4]byte{255, 255, 255, 255}) || dst == broadcastOf(e.addr):
+	case dst == netip.AddrFrom4([4]byte{255, 255, 255, 255}) || e.addr.Bits() < 31 && dst == broadcastOf(e.addr):
 		return e.frame(BroadcastMAC, pkt)
 	case dst.IsMulticast():
 		d := dst.As4()
@@ -151,14 +158,40 @@ func (e *Emulator) ToVPN(pkt []byte) []byte {
 		}
 		return e.frame(ent.mac, pkt)
 	}
-	if q := e.pending[hop]; len(q) < maxPendingPerIP {
-		e.pending[hop] = append(q, pkt)
+	if _, ok := e.pending[hop]; ok && now.Sub(e.since[hop]) > pendingTimeout {
+		// 応答が無いまま時間が経った。古いパケットは捨てて解決し直す
+		e.dropPending(hop)
+	}
+	if q, ok := e.pending[hop]; ok || len(e.pending) < maxPendingIPs {
+		if !ok {
+			e.since[hop] = now
+		}
+		if len(q) < maxPendingPerIP {
+			e.pending[hop] = append(q, pkt)
+		}
 	}
 	if now.Sub(e.asked[hop]) > arpRetry {
 		e.asked[hop] = now
 		e.enqueue(arpPacket(1, e.mac, e.addr.Addr(), nil, hop))
 	}
 	return nil
+}
+
+func (e *Emulator) dropPending(ip netip.Addr) {
+	delete(e.pending, ip)
+	delete(e.since, ip)
+	delete(e.asked, ip)
+}
+
+func (e *Emulator) evictOldestARP() {
+	var oldest netip.Addr
+	var t time.Time
+	for ip, ent := range e.arp {
+		if !oldest.IsValid() || ent.seen.Before(t) {
+			oldest, t = ip, ent.seen
+		}
+	}
+	delete(e.arp, oldest)
 }
 
 func (e *Emulator) frame(dst net.HardwareAddr, pkt []byte) []byte {

@@ -27,6 +27,9 @@ type profileEditor struct {
 	status     *widget.Label
 	details    *detailsView
 	connectBtn *widget.Button
+	saveBtn    *widget.Button
+	deleted    bool // 編集元の接続設定が削除された (保存すると同名の別設定を上書きしてしまうので保存不可)
+	saving     bool
 
 	name, server, hub, user, password, cert, proxy *widget.Entry
 	staticAddr, staticGW, staticDNS                *widget.Entry
@@ -90,7 +93,12 @@ func (e *profileEditor) build() {
 	e.hub = entry("")
 	e.user = entry("")
 	e.password = widget.NewPasswordEntry()
-	e.password.SetPlaceHolder(i18n.T("ph.password"))
+	if e.orig != nil && e.orig.PasswordSet {
+		// デーモンはパスワードを返さない。空欄のまま保存すると保存済みのものを使う
+		e.password.SetPlaceHolder(i18n.T("ph.passwordKeep"))
+	} else {
+		e.password.SetPlaceHolder(i18n.T("ph.password"))
+	}
 	e.cert = entry(i18n.T("ph.cert"))
 	e.proxy = entry("http://user:pass@proxy:8080")
 	e.mode = widget.NewRadioGroup([]string{config.ModeNIC, config.ModeSocks}, nil)
@@ -146,10 +154,13 @@ func (e *profileEditor) build() {
 	e.addressing.OnChanged = func(string) { e.updateVisibility() }
 	e.dns.OnChanged = func(bool) { e.updateVisibility() }
 
-	saveBtn := widget.NewButtonWithIcon(i18n.T("btn.save"), theme.DocumentSaveIcon(), e.save)
-	saveBtn.Importance = widget.HighImportance
+	e.saveBtn = widget.NewButtonWithIcon(i18n.T("btn.save"), theme.DocumentSaveIcon(), e.save)
+	e.saveBtn.Importance = widget.HighImportance
+	if e.deleted || e.saving {
+		e.saveBtn.Disable()
+	}
 	cancelBtn := widget.NewButton(i18n.T("btn.cancel"), e.close)
-	buttons := container.NewHBox(layout.NewSpacer(), cancelBtn, saveBtn)
+	buttons := container.NewHBox(layout.NewSpacer(), cancelBtn, e.saveBtn)
 
 	var body fyne.CanvasObject = container.NewVScroll(e.form)
 	var top fyne.CanvasObject
@@ -264,13 +275,15 @@ func (e *profileEditor) updateStatus(st []engine.Status) {
 	if e.orig == nil {
 		return
 	}
-	x := findStatus(st, e.orig.Name)
-	e.details.update(x)
-	if x == nil {
-		e.status.SetText(i18n.T("ed.deleted", e.orig.Name))
-		e.connectBtn.Disable()
+	if e.deleted {
+		e.markDeleted()
 		return
 	}
+	x := findStatus(st, e.orig.Name)
+	if x == nil {
+		return // まだ状態が届いていない (削除は markDeleted で扱う)
+	}
+	e.details.update(x)
 	text := stateText(x.State)
 	if x.Address != "" {
 		text += "  " + x.Address
@@ -287,6 +300,15 @@ func (e *profileEditor) updateStatus(st []engine.Status) {
 		e.connectBtn.SetText(i18n.T("btn.connect"))
 		e.connectBtn.SetIcon(theme.MediaPlayIcon())
 	}
+}
+
+// markDeleted は編集元の接続設定が削除されたことを表示し、保存・接続をできなくする。
+func (e *profileEditor) markDeleted() {
+	e.deleted = true
+	e.status.SetText(i18n.T("ed.deleted", e.orig.Name))
+	e.details.update(nil)
+	e.connectBtn.Disable()
+	e.saveBtn.Disable()
 }
 
 func (e *profileEditor) fill(p config.Profile) {
@@ -361,8 +383,9 @@ func (e *profileEditor) collect() (config.Profile, error) {
 		p.NIC.DNSDomains = nil
 	}
 	if e.orig != nil {
-		// フォームに無い項目は元の値を引き継ぐ
-		p.Socks.Username, p.Socks.Password = e.orig.Socks.Username, e.orig.Socks.Password
+		// パスワードが空欄なら保存済みのものを使う。フォームに無い SOCKS5 認証も引き継ぐ
+		p.PasswordSet = e.orig.PasswordSet && p.Password == ""
+		p.Socks.Username, p.Socks.Password, p.Socks.PasswordSet = e.orig.Socks.Username, e.orig.Socks.Password, e.orig.Socks.PasswordSet
 	}
 	for _, line := range splitList(e.forwards.Text, "\n") {
 		l, t, ok := strings.Cut(line, "=")
@@ -374,21 +397,35 @@ func (e *profileEditor) collect() (config.Profile, error) {
 	return p, p.Normalize()
 }
 
-// save は保存してウィンドウを閉じる。
+// save は保存してウィンドウを閉じる。デーモンは接続中の設定の切断を待ってから応答するので、
+// UI を止めないよう通信はバックグラウンドで行う。
 func (e *profileEditor) save() {
+	if e.deleted || e.saving {
+		return
+	}
 	p, err := e.collect()
 	if err != nil {
 		dialog.ShowError(err, e.w)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := e.g.client.PutProfile(ctx, e.origName(), p); err != nil {
-		dialog.ShowError(err, e.w)
-		return
-	}
-	if e.g.manager != nil {
-		e.g.manager.selected = p.Name
-	}
-	e.close()
+	e.saving = true
+	e.saveBtn.Disable()
+	orig := e.origName()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		err := e.g.client.PutProfile(ctx, orig, p)
+		fyne.Do(func() {
+			e.saving = false
+			if err != nil {
+				e.saveBtn.Enable()
+				dialog.ShowError(err, e.w)
+				return
+			}
+			if e.g.manager != nil {
+				e.g.manager.selectName(p.Name)
+			}
+			e.close()
+		})
+	}()
 }

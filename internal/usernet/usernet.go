@@ -51,6 +51,8 @@ type Config struct {
 	Logf     func(format string, args ...any)
 	// Static が nil でなければ DHCP を使わずにこのアドレスを使う
 	Static *l2.Lease
+	// OnLease は DHCP の更新・再取得でリースが変わったときに呼ばれる (任意)
+	OnLease func(*l2.Lease)
 }
 
 // Net は VPN 上のユーザ空間ネットワーク。
@@ -178,12 +180,16 @@ func (n *Net) renewLoop() {
 	defer n.wg.Done()
 	for {
 		l := n.lease.Load()
+		if !l.Renewable() {
+			return // リース時間 0 は無期限として扱う
+		}
 		select {
 		case <-n.ctx.Done():
 			return
 		case <-time.After(time.Until(l.RenewAt())):
 		}
-		ctx, cancel := context.WithTimeout(n.ctx, l.LeaseTime/4)
+		// T1 からリース期限まで再送を続ける
+		ctx, cancel := context.WithDeadline(n.ctx, l.Expires())
 		nl, err := n.dhcp.Renew(ctx, l)
 		cancel()
 		if err != nil {
@@ -191,14 +197,20 @@ func (n *Net) renewLoop() {
 				return
 			}
 			n.cfg.Logf("dhcp renew failed: %v; reacquiring", err)
-			if nl, err = n.dhcp.Acquire(n.ctx); err != nil {
-				n.fail(err)
+			actx, cancel := context.WithTimeout(n.ctx, 30*time.Second)
+			nl, err = n.dhcp.Acquire(actx)
+			cancel()
+			if err != nil {
+				n.fail(fmt.Errorf("dhcp: lease expired: %w", err))
 				return
 			}
 		}
 		if err := n.apply(nl); err != nil {
 			n.fail(err)
 			return
+		}
+		if n.cfg.OnLease != nil {
+			n.cfg.OnLease(nl)
 		}
 	}
 }
