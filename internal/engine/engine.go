@@ -29,10 +29,18 @@ type Status struct {
 	Name        string    `json:"name"`
 	Mode        string    `json:"mode"`
 	Server      string    `json:"server"`
+	Hub         string    `json:"hub"`
+	User        string    `json:"user"`
 	State       State     `json:"state"`
 	Error       string    `json:"error,omitempty"`
 	Since       time.Time `json:"since"`
 	Session     string    `json:"session,omitempty"`
+	ServerInfo  string    `json:"server_info,omitempty"` // サーバ製品名・ビルド
+	Interface   string    `json:"interface,omitempty"`   // NIC モードの仮想 NIC 名
+	BytesIn     uint64    `json:"bytes_in,omitempty"`
+	BytesOut    uint64    `json:"bytes_out,omitempty"`
+	PacketsIn   uint64    `json:"packets_in,omitempty"`
+	PacketsOut  uint64    `json:"packets_out,omitempty"`
 	Address     string    `json:"address,omitempty"`
 	Gateway     string    `json:"gateway,omitempty"`
 	DNS         []string  `json:"dns,omitempty"`

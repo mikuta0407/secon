@@ -16,6 +16,11 @@ import (
 	"github.com/mikuta0407/secon/internal/engine"
 )
 
+const (
+	ctxSecond    = time.Second
+	pollInterval = 2 * time.Second // ウィンドウ表示中に送受信量などを更新する間隔
+)
+
 type gui struct {
 	app    fyne.App
 	desk   desktop.App
@@ -29,18 +34,22 @@ type gui struct {
 	status    []engine.Status
 	daemonErr error
 	settings  *settingsWindow
+	manager   *managerWindow
+	poll      chan struct{}
 }
 
 func main() {
 	openSettings := flag.Bool("settings", false, "起動時に設定画面を開く")
+	openManager := flag.Bool("manager", false, "起動時に接続マネージャを開く")
 	flag.Parse()
 
 	a := app.NewWithID("io.github.mikuta0407.secon")
+	a.Settings().SetTheme(newCompactTheme())
 	desk, ok := a.(desktop.App)
 	if !ok {
 		log.Fatal("system tray is not supported on this platform")
 	}
-	g := &gui{app: a, desk: desk, client: api.NewClient(api.ClientSocket()), menu: fyne.NewMenu("secon")}
+	g := &gui{app: a, desk: desk, client: api.NewClient(api.ClientSocket()), menu: fyne.NewMenu("secon"), poll: make(chan struct{}, 1)}
 	a.Lifecycle().SetOnStarted(func() {
 		hideDock()
 		// トレイの初期化完了前に設定したアイコンは反映されないことがある (macOS)。
@@ -52,8 +61,12 @@ func main() {
 	})
 	g.render()
 	go g.watch()
+	go g.pollLoop()
 	if *openSettings {
-		g.openSettings()
+		g.openSettings("")
+	}
+	if *openManager {
+		g.openManager()
 	}
 	a.Run()
 }
@@ -63,21 +76,60 @@ func (g *gui) watch() {
 	for {
 		log.Printf("connecting to daemon (%s)", g.client.Socket)
 		err := g.client.Events(context.Background(), func(st []engine.Status) {
-			fyne.Do(func() {
-				g.notifyChanges(st)
-				g.status, g.daemonErr = st, nil
-				g.render()
-			})
+			fyne.Do(func() { g.apply(st, nil) })
 		})
 		if err == nil {
 			err = fmt.Errorf("connection to daemon closed")
 		}
 		log.Printf("daemon: %v", err)
-		fyne.Do(func() {
-			g.status, g.daemonErr = nil, err
-			g.render()
-		})
+		fyne.Do(func() { g.apply(nil, err) })
 		time.Sleep(3 * time.Second)
+	}
+}
+
+// pollLoop はウィンドウ表示中だけ状態を取り直す (送受信量・接続時間はイベントが来ないため)。
+func (g *gui) pollLoop() {
+	t := time.NewTicker(pollInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+		case <-g.poll:
+		}
+		visible := false
+		fyne.DoAndWait(func() {
+			visible = (g.manager != nil && g.manager.visible) || (g.settings != nil && g.settings.visible)
+		})
+		if !visible {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		st, err := g.client.Status(ctx)
+		cancel()
+		if err == nil {
+			fyne.Do(func() { g.apply(st, nil) })
+		}
+	}
+}
+
+func (g *gui) pollNow() {
+	select {
+	case g.poll <- struct{}{}:
+	default:
+	}
+}
+
+func (g *gui) apply(st []engine.Status, err error) {
+	if err == nil {
+		g.notifyChanges(st)
+	}
+	g.status, g.daemonErr = st, err
+	g.render()
+	if g.manager != nil {
+		g.manager.updateStatus(st)
+	}
+	if g.settings != nil {
+		g.settings.updateStatus(st)
 	}
 }
 
@@ -99,22 +151,6 @@ func (g *gui) notifyChanges(next []engine.Status) {
 			g.app.SendNotification(fyne.NewNotification("secon", fmt.Sprintf("%s が切断されました: %s", s.Name, s.Error)))
 		}
 	}
-}
-
-var stateLabel = map[engine.State]string{
-	engine.StateDisconnected: "切断",
-	engine.StateConnecting:   "接続中…",
-	engine.StateConnected:    "接続済み",
-	engine.StateReconnecting: "再接続中…",
-	engine.StateFailed:       "エラー",
-}
-
-var stateMark = map[engine.State]string{
-	engine.StateDisconnected: "○",
-	engine.StateConnecting:   "◐",
-	engine.StateConnected:    "●",
-	engine.StateReconnecting: "◐",
-	engine.StateFailed:       "✕",
 }
 
 // render はトレイのメニューとアイコンを作り直す。
@@ -146,7 +182,8 @@ func (g *gui) render() {
 	quit.IsQuit = true
 	items = append(items,
 		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("設定…", g.openSettings),
+		fyne.NewMenuItem("接続マネージャ…", g.openManager),
+		fyne.NewMenuItem("設定…", func() { g.openSettings("") }),
 		quit,
 	)
 	g.menu.Items = items
@@ -155,9 +192,6 @@ func (g *gui) render() {
 		g.desk.SetSystemTrayIcon(iconConnected)
 	} else {
 		g.desk.SetSystemTrayIcon(iconDisconnected)
-	}
-	if g.settings != nil {
-		g.settings.updateStatus(g.status)
 	}
 }
 
@@ -183,12 +217,25 @@ func (g *gui) profileMenu(s engine.Status) *fyne.Menu {
 	}
 	items = append(items, fyne.NewMenuItemSeparator())
 	name := s.Name
-	if s.State == engine.StateDisconnected || s.State == engine.StateFailed {
-		items = append(items, fyne.NewMenuItem("接続", func() { g.call(func(ctx context.Context) error { return g.client.Connect(ctx, name) }) }))
+	if isActive(s.State) {
+		items = append(items, fyne.NewMenuItem("切断", func() { g.disconnect(name) }))
 	} else {
-		items = append(items, fyne.NewMenuItem("切断", func() { g.call(func(ctx context.Context) error { return g.client.Disconnect(ctx, name) }) }))
+		items = append(items, fyne.NewMenuItem("接続", func() { g.connect(name) }))
 	}
+	items = append(items, fyne.NewMenuItem("編集…", func() { g.openSettings(name) }))
 	return fyne.NewMenu(s.Name, items...)
+}
+
+func (g *gui) connect(name string) {
+	if name != "" {
+		g.call(func(ctx context.Context) error { return g.client.Connect(ctx, name) })
+	}
+}
+
+func (g *gui) disconnect(name string) {
+	if name != "" {
+		g.call(func(ctx context.Context) error { return g.client.Disconnect(ctx, name) })
+	}
 }
 
 // call は API をバックグラウンドで呼び、失敗したら通知する。
@@ -204,9 +251,18 @@ func (g *gui) call(f func(ctx context.Context) error) {
 	}()
 }
 
-func (g *gui) openSettings() {
+// openSettings は設定画面を開く。name を指定するとそのプロファイルを選択する ("" なら先頭)。
+func (g *gui) openSettings(name string) {
 	if g.settings == nil {
 		g.settings = newSettingsWindow(g)
 	}
-	g.settings.show()
+	g.settings.show(name)
+}
+
+func (g *gui) openManager() {
+	if g.manager == nil {
+		g.manager = newManagerWindow(g)
+		g.manager.updateStatus(g.status)
+	}
+	g.manager.show()
 }

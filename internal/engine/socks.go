@@ -21,7 +21,7 @@ func runSocksMode(ctx context.Context, r *runner, sess *proto.Session) error {
 	defer r.dialer.Store(nil)
 
 	l := n.Lease()
-	r.connected(sess, l.IP.String(), l.Router.String(), addrStrings(l.DNS))
+	r.connected(sess, "", l.IP.String(), l.Router.String(), addrStrings(l.DNS))
 
 	select {
 	case <-ctx.Done():

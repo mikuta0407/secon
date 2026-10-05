@@ -10,6 +10,7 @@ import (
 	mrand "math/rand/v2"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,6 +23,17 @@ const (
 	maxBlocksPerTx = 256
 )
 
+// Stats はセッションの送受信量 (Ethernet フレーム単位、KeepAlive は含まない)。
+type Stats struct {
+	BytesIn, BytesOut     atomic.Uint64
+	PacketsIn, PacketsOut atomic.Uint64
+}
+
+// Stats は送受信量を返す。
+func (s *Session) Stats() (bytesIn, bytesOut, packetsIn, packetsOut uint64) {
+	return s.stats.BytesIn.Load(), s.stats.BytesOut.Load(), s.stats.PacketsIn.Load(), s.stats.PacketsOut.Load()
+}
+
 // Session は認証後のデータチャネル。Ethernet フレームを送受信する。
 // ReadFrame は 1 つの goroutine から、WriteFrames は並行に呼んでよい。
 type Session struct {
@@ -32,6 +44,8 @@ type Session struct {
 
 	pending uint32 // 現在のデータヘッダで残っているブロック数
 	hdr     [8]byte
+
+	stats Stats
 
 	wmu     sync.Mutex
 	wbuf    []byte
@@ -94,6 +108,8 @@ func (s *Session) ReadFrame(buf []byte) (int, error) {
 		if _, err := io.ReadFull(s.r, buf[:size]); err != nil {
 			return 0, err
 		}
+		s.stats.BytesIn.Add(uint64(size))
+		s.stats.PacketsIn.Add(1)
 		return int(size), nil
 	}
 }
@@ -124,6 +140,8 @@ func (s *Session) WriteFrames(frames ...[]byte) error {
 		if _, err := s.conn.Write(b); err != nil {
 			return err
 		}
+		s.stats.PacketsOut.Add(uint64(len(chunk)))
+		s.stats.BytesOut.Add(uint64(len(b) - 4 - 4*len(chunk)))
 	}
 	return nil
 }

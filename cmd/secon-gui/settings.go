@@ -10,6 +10,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/mikuta0407/secon/internal/config"
@@ -20,10 +21,14 @@ import (
 type settingsWindow struct {
 	g        *gui
 	w        fyne.Window
+	visible  bool
 	profiles []config.Profile
 	selected int // -1 は新規
 	list     *widget.List
 	status   *widget.Label
+	details  *detailsView
+
+	connectBtn *widget.Button
 
 	name, server, hub, user, password, cert, proxy *widget.Entry
 	socksListen, routes, dnsDomains, forwards      *widget.Entry
@@ -34,7 +39,7 @@ type settingsWindow struct {
 func newSettingsWindow(g *gui) *settingsWindow {
 	s := &settingsWindow{g: g, selected: -1}
 	s.w = g.app.NewWindow("secon 設定")
-	s.w.SetCloseIntercept(s.w.Hide)
+	s.w.SetCloseIntercept(func() { s.visible = false; s.w.Hide() })
 
 	s.name = widget.NewEntry()
 	s.server = widget.NewEntry()
@@ -88,20 +93,26 @@ func newSettingsWindow(g *gui) *settingsWindow {
 	)
 	s.list.OnSelected = func(i widget.ListItemID) { s.selected = i; s.fill(s.profiles[i]) }
 
-	s.status = widget.NewLabel("")
-	newBtn := widget.NewButton("新規", func() {
+	s.status = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	s.details = newDetailsView()
+	newBtn := widget.NewButtonWithIcon("新規", theme.ContentAddIcon(), func() {
 		s.list.UnselectAll()
 		s.selected = -1
 		s.fill(config.Profile{Hub: "VPN", Mode: config.ModeSocks})
 	})
-	saveBtn := widget.NewButton("保存", s.save)
+	s.connectBtn = widget.NewButtonWithIcon("接続", theme.MediaPlayIcon(), s.toggleConnect)
+	saveBtn := widget.NewButtonWithIcon("保存", theme.DocumentSaveIcon(), s.save)
 	saveBtn.Importance = widget.HighImportance
-	delBtn := widget.NewButton("削除", s.remove)
+	delBtn := widget.NewButtonWithIcon("削除", theme.DeleteIcon(), s.remove)
 
+	tabs := container.NewAppTabs(
+		container.NewTabItem("接続設定", container.NewVScroll(form)),
+		container.NewTabItem("接続情報", container.NewVScroll(s.details.box)),
+	)
 	left := container.NewBorder(nil, newBtn, nil, nil, s.list)
-	s.status.Wrapping = fyne.TextWrapWord
+	header := container.NewBorder(nil, nil, nil, s.connectBtn, s.status)
 	buttons := container.NewHBox(layout.NewSpacer(), delBtn, saveBtn)
-	right := container.NewBorder(nil, container.NewVBox(s.status, buttons), nil, nil, container.NewVScroll(form))
+	right := container.NewBorder(container.NewVBox(header, widget.NewSeparator()), buttons, nil, nil, tabs)
 	split := container.NewHSplit(left, right)
 	split.Offset = 0.25
 	s.w.SetContent(split)
@@ -109,11 +120,29 @@ func newSettingsWindow(g *gui) *settingsWindow {
 	return s
 }
 
-func (s *settingsWindow) show() {
-	s.reload("")
+func (s *settingsWindow) show(name string) {
+	s.visible = true
+	s.reload(name)
 	activate() // 表示前にアプリを前面化しないと他アプリのウィンドウの後ろに出る (macOS)
 	s.w.Show()
 	s.w.RequestFocus()
+	s.g.pollNow()
+}
+
+func (s *settingsWindow) current() string {
+	if s.selected >= 0 && s.selected < len(s.profiles) {
+		return s.profiles[s.selected].Name
+	}
+	return ""
+}
+
+func (s *settingsWindow) toggleConnect() {
+	name := s.current()
+	if st := findStatus(s.g.status, name); st != nil && isActive(st.State) {
+		s.g.disconnect(name)
+	} else {
+		s.g.connect(name)
+	}
 }
 
 // reload はデーモンからプロファイルを読み直し、name を選択する。
@@ -138,21 +167,29 @@ func (s *settingsWindow) reload(name string) {
 }
 
 func (s *settingsWindow) updateStatus(st []engine.Status) {
-	if s.selected < 0 || s.selected >= len(s.profiles) {
-		s.status.SetText("")
+	name := s.current()
+	x := findStatus(st, name)
+	s.details.update(x)
+	if x == nil {
+		s.status.SetText("新しい接続設定")
+		s.connectBtn.Disable()
 		return
 	}
-	for _, x := range st {
-		if x.Name == s.profiles[s.selected].Name {
-			text := stateMark[x.State] + " " + stateLabel[x.State]
-			if x.Address != "" {
-				text += "  " + x.Address
-			}
-			if x.Error != "" {
-				text += "  — " + x.Error
-			}
-			s.status.SetText(text)
-		}
+	text := name + "  " + stateText(x.State)
+	if x.Address != "" {
+		text += "  " + x.Address
+	}
+	if x.Error != "" {
+		text += "  — " + x.Error
+	}
+	s.status.SetText(text)
+	s.connectBtn.Enable()
+	if isActive(x.State) {
+		s.connectBtn.SetText("切断")
+		s.connectBtn.SetIcon(theme.MediaStopIcon())
+	} else {
+		s.connectBtn.SetText("接続")
+		s.connectBtn.SetIcon(theme.MediaPlayIcon())
 	}
 }
 

@@ -34,13 +34,14 @@ type runner struct {
 	done   chan struct{}
 
 	dialer atomic.Pointer[dialerBox]
+	sess   atomic.Pointer[proto.Session] // 送受信量の取得用
 }
 
 type dialerBox struct{ d forward.Dialer }
 
 func newRunner(p config.Profile, m *Manager) *runner {
 	r := &runner{profile: p, m: m, mac: profileMAC(p.Name)}
-	r.status = Status{Name: p.Name, Mode: p.Mode, Server: p.Server, State: StateDisconnected, Since: time.Now(), AutoConnect: p.AutoConnect}
+	r.status = Status{Name: p.Name, Mode: p.Mode, Server: p.Server, Hub: p.Hub, User: p.User, State: StateDisconnected, Since: time.Now(), AutoConnect: p.AutoConnect}
 	return r
 }
 
@@ -59,6 +60,9 @@ func (r *runner) getStatus() Status {
 	s := r.status
 	s.DNS = append([]string(nil), s.DNS...)
 	s.Forwards = append([]string(nil), s.Forwards...)
+	if sess := r.sess.Load(); sess != nil && s.State == StateConnected {
+		s.BytesIn, s.BytesOut, s.PacketsIn, s.PacketsOut = sess.Stats()
+	}
 	return s
 }
 
@@ -81,7 +85,7 @@ func (r *runner) setState(st State, err error) {
 			s.Error = err.Error()
 		}
 		if st != StateConnected {
-			s.Session, s.Address, s.Gateway, s.DNS = "", "", "", nil
+			s.Session, s.Address, s.Gateway, s.DNS, s.ServerInfo, s.Interface = "", "", "", nil, "", ""
 		}
 	})
 }
@@ -217,12 +221,17 @@ func (r *runner) session(ctx context.Context) error {
 	if p.Password == "" {
 		login.AuthType = proto.AuthAnonymous
 	}
-	sess, _, err := proto.Handshake(conn, login)
+	sess, hello, err := proto.Handshake(conn, login)
 	if err != nil {
 		conn.Close()
 		return err
 	}
 	defer sess.Close()
+	r.sess.Store(sess)
+	defer r.sess.Store(nil)
+	r.update(func(s *Status) {
+		s.ServerInfo = fmt.Sprintf("%s (ver %d.%02d build %d)", hello.Server, hello.Version/100, hello.Version%100, hello.Build)
+	})
 	r.logf("session %s established (%s)", sess.Welcome.SessionName, p.Server)
 	if sess.Welcome.Message != "" {
 		r.logf("server message: %s", sess.Welcome.Message)
@@ -236,10 +245,10 @@ func (r *runner) session(ctx context.Context) error {
 }
 
 // connected は接続完了をステータスに反映する。
-func (r *runner) connected(sess *proto.Session, addr, gw string, dns []string) {
+func (r *runner) connected(sess *proto.Session, iface, addr, gw string, dns []string) {
 	r.update(func(s *Status) {
 		s.State, s.Error = StateConnected, ""
-		s.Session, s.Address, s.Gateway, s.DNS = sess.Welcome.SessionName, addr, gw, dns
+		s.Session, s.Interface, s.Address, s.Gateway, s.DNS = sess.Welcome.SessionName, iface, addr, gw, dns
 	})
 }
 

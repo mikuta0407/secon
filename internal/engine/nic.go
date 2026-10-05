@@ -85,7 +85,7 @@ func runNICMode(ctx context.Context, r *runner, sess *proto.Session) error {
 
 	r.dialer.Store(&dialerBox{&net.Dialer{}})
 	defer r.dialer.Store(nil)
-	r.connected(sess, lease.IP.String(), lease.Router.String(), addrStrings(lease.DNS))
+	r.connected(sess, dev.Name(), lease.IP.String(), lease.Router.String(), addrStrings(lease.DNS))
 	r.logf("nic %s: %s gw %s routes %v default_gateway=%v", dev.Name(), lease.IP, lease.Router, settings.Routes, settings.DefaultGateway)
 
 	for {

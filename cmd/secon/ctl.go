@@ -56,15 +56,23 @@ func printDetail(s engine.Status) {
 	row("Name", s.Name)
 	row("Mode", s.Mode)
 	row("Server", s.Server)
+	row("Hub/User", s.Hub+" / "+s.User)
 	row("State", fmt.Sprintf("%s (since %s)", s.State, s.Since.Local().Format(time.DateTime)))
 	row("Error", s.Error)
 	row("Session", s.Session)
+	row("Server info", s.ServerInfo)
+	row("Interface", s.Interface)
 	row("Address", s.Address)
 	row("Gateway", s.Gateway)
 	row("DNS", strings.Join(s.DNS, ", "))
 	row("SOCKS5", s.Socks)
 	for _, f := range s.Forwards {
 		row("Forward", f)
+	}
+	if s.State == engine.StateConnected {
+		row("Uptime", time.Since(s.Since).Round(time.Second).String())
+		row("Received", fmt.Sprintf("%d bytes (%d packets)", s.BytesIn, s.PacketsIn))
+		row("Sent", fmt.Sprintf("%d bytes (%d packets)", s.BytesOut, s.PacketsOut))
 	}
 	tw.Flush()
 }
