@@ -90,8 +90,8 @@ func newManagerWindow(g *gui) *managerWindow {
 
 	m.connectBtn = widget.NewButtonWithIcon("接続", theme.MediaPlayIcon(), func() { m.g.connect(m.selected) })
 	m.disconnectBtn = widget.NewButtonWithIcon("切断", theme.MediaStopIcon(), func() { m.g.disconnect(m.selected) })
-	newBtn := widget.NewButtonWithIcon("新規", theme.ContentAddIcon(), func() { m.g.openSettings("") })
-	m.editBtn = widget.NewButtonWithIcon("編集", theme.DocumentCreateIcon(), func() { m.g.openSettings(m.selected) })
+	newBtn := widget.NewButtonWithIcon("新規", theme.ContentAddIcon(), func() { m.g.openEditor("") })
+	m.editBtn = widget.NewButtonWithIcon("プロパティ", theme.DocumentCreateIcon(), func() { m.g.openEditor(m.selected) })
 	m.deleteBtn = widget.NewButtonWithIcon("削除", theme.DeleteIcon(), m.remove)
 	m.connectBtn.Importance = widget.HighImportance
 	toolbar := container.NewHBox(m.connectBtn, m.disconnectBtn, widget.NewSeparator(), newBtn, m.editBtn, m.deleteBtn, layout.NewSpacer())

@@ -107,14 +107,14 @@ func (c *Config) Validate() error {
 	for i := range c.Profiles {
 		p := &c.Profiles[i]
 		if p.Name == "" {
-			return fmt.Errorf("profile #%d: name is required", i+1)
+			return fmt.Errorf("%d 番目の接続設定: 接続設定名を入力してください", i+1)
 		}
 		if seen[p.Name] {
-			return fmt.Errorf("profile %q: duplicate name", p.Name)
+			return fmt.Errorf("接続設定名 %q が重複しています", p.Name)
 		}
 		seen[p.Name] = true
 		if err := p.Normalize(); err != nil {
-			return fmt.Errorf("profile %q: %w", p.Name, err)
+			return fmt.Errorf("接続設定 %q: %w", p.Name, err)
 		}
 	}
 	return nil
@@ -122,30 +122,33 @@ func (c *Config) Validate() error {
 
 // Normalize はプロファイルを検証し、既定値を補う。
 func (p *Profile) Normalize() error {
+	if p.Name == "" {
+		return errors.New("接続設定名を入力してください")
+	}
 	if p.Server == "" {
-		return errors.New("server is required")
+		return errors.New("サーバを入力してください")
 	}
 	if _, _, err := net.SplitHostPort(p.Server); err != nil {
 		p.Server = net.JoinHostPort(p.Server, "443")
 	}
 	if p.Hub == "" {
-		return errors.New("hub is required")
+		return errors.New("仮想 HUB を入力してください")
 	}
 	if p.User == "" {
-		return errors.New("user is required")
+		return errors.New("ユーザ名を入力してください")
 	}
 	switch p.Mode {
 	case "":
 		p.Mode = ModeSocks
 	case ModeSocks, ModeNIC:
 	default:
-		return fmt.Errorf("unknown mode %q", p.Mode)
+		return fmt.Errorf("モード %q は不明です (nic または socks)", p.Mode)
 	}
 	p.CertSHA256 = strings.ToLower(strings.ReplaceAll(p.CertSHA256, ":", ""))
 	if p.Proxy != "" {
 		u, err := url.Parse(p.Proxy)
 		if err != nil || u.Scheme != "http" || u.Host == "" {
-			return fmt.Errorf("invalid proxy %q (expected http://host:port)", p.Proxy)
+			return fmt.Errorf("HTTP Proxy の形式が不正です: %q (http://host:port)", p.Proxy)
 		}
 	}
 	if p.Mode == ModeSocks && p.Socks.Listen == "" {
@@ -153,15 +156,15 @@ func (p *Profile) Normalize() error {
 	}
 	for _, r := range p.NIC.Routes {
 		if _, err := netip.ParsePrefix(r); err != nil {
-			return fmt.Errorf("invalid route %q", r)
+			return fmt.Errorf("経路の形式が不正です: %q (例 10.0.0.0/8)", r)
 		}
 	}
 	for _, f := range p.Forwards {
 		if _, _, err := net.SplitHostPort(f.Listen); err != nil {
-			return fmt.Errorf("invalid forward listen %q", f.Listen)
+			return fmt.Errorf("ポート転送の待受アドレスが不正です: %q (例 127.0.0.1:13389)", f.Listen)
 		}
 		if _, _, err := net.SplitHostPort(f.Target); err != nil {
-			return fmt.Errorf("invalid forward target %q", f.Target)
+			return fmt.Errorf("ポート転送の転送先が不正です: %q (例 10.0.0.5:3389)", f.Target)
 		}
 	}
 	return nil

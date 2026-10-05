@@ -33,14 +33,16 @@ type gui struct {
 
 	status    []engine.Status
 	daemonErr error
-	settings  *settingsWindow
 	manager   *managerWindow
+	editors   map[string]*profileEditor // 接続設定名 → 開いているプロパティウィンドウ (新規は含まない)
+	newEditor []*profileEditor
 	poll      chan struct{}
 }
 
 func main() {
-	openSettings := flag.Bool("settings", false, "起動時に設定画面を開く")
 	openManager := flag.Bool("manager", false, "起動時に接続マネージャを開く")
+	editName := flag.String("edit", "", "起動時にこの接続設定のプロパティを開く (確認用)")
+	newProfile := flag.Bool("new", false, "起動時に新しい接続設定のウィンドウを開く (確認用)")
 	flag.Parse()
 
 	a := app.NewWithID("io.github.mikuta0407.secon")
@@ -49,7 +51,7 @@ func main() {
 	if !ok {
 		log.Fatal("system tray is not supported on this platform")
 	}
-	g := &gui{app: a, desk: desk, client: api.NewClient(api.ClientSocket()), menu: fyne.NewMenu("secon"), poll: make(chan struct{}, 1)}
+	g := &gui{app: a, desk: desk, client: api.NewClient(api.ClientSocket()), menu: fyne.NewMenu("secon"), poll: make(chan struct{}, 1), editors: map[string]*profileEditor{}}
 	a.Lifecycle().SetOnStarted(func() {
 		hideDock()
 		// トレイの初期化完了前に設定したアイコンは反映されないことがある (macOS)。
@@ -62,11 +64,14 @@ func main() {
 	g.render()
 	go g.watch()
 	go g.pollLoop()
-	if *openSettings {
-		g.openSettings("")
-	}
 	if *openManager {
 		g.openManager()
+	}
+	if *editName != "" {
+		g.openEditor(*editName)
+	}
+	if *newProfile {
+		g.openEditor("")
 	}
 	a.Run()
 }
@@ -98,7 +103,7 @@ func (g *gui) pollLoop() {
 		}
 		visible := false
 		fyne.DoAndWait(func() {
-			visible = (g.manager != nil && g.manager.visible) || (g.settings != nil && g.settings.visible)
+			visible = (g.manager != nil && g.manager.visible) || len(g.editors) > 0
 		})
 		if !visible {
 			continue
@@ -128,8 +133,8 @@ func (g *gui) apply(st []engine.Status, err error) {
 	if g.manager != nil {
 		g.manager.updateStatus(st)
 	}
-	if g.settings != nil {
-		g.settings.updateStatus(st)
+	for _, e := range g.editors {
+		e.updateStatus(st)
 	}
 }
 
@@ -183,7 +188,6 @@ func (g *gui) render() {
 	items = append(items,
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("接続マネージャ…", g.openManager),
-		fyne.NewMenuItem("設定…", func() { g.openSettings("") }),
 		quit,
 	)
 	g.menu.Items = items
@@ -222,7 +226,7 @@ func (g *gui) profileMenu(s engine.Status) *fyne.Menu {
 	} else {
 		items = append(items, fyne.NewMenuItem("接続", func() { g.connect(name) }))
 	}
-	items = append(items, fyne.NewMenuItem("編集…", func() { g.openSettings(name) }))
+	items = append(items, fyne.NewMenuItem("プロパティ…", func() { g.openEditor(name) }))
 	return fyne.NewMenu(s.Name, items...)
 }
 
@@ -251,12 +255,44 @@ func (g *gui) call(f func(ctx context.Context) error) {
 	}()
 }
 
-// openSettings は設定画面を開く。name を指定するとそのプロファイルを選択する ("" なら先頭)。
-func (g *gui) openSettings(name string) {
-	if g.settings == nil {
-		g.settings = newSettingsWindow(g)
+// openEditor は接続設定のプロパティウィンドウを開く。name が "" なら新規作成。
+// 同じ接続設定のウィンドウが既に開いていれば前面に出す。
+func (g *gui) openEditor(name string) {
+	if name == "" {
+		e := newProfileEditor(g, nil)
+		g.newEditor = append(g.newEditor, e)
+		e.show()
+		return
 	}
-	g.settings.show(name)
+	if e, ok := g.editors[name]; ok {
+		e.show()
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ps, err := g.client.Profiles(ctx)
+	if err != nil {
+		g.app.SendNotification(fyne.NewNotification("secon", err.Error()))
+		return
+	}
+	for _, p := range ps {
+		if p.Name == name {
+			e := newProfileEditor(g, &p)
+			g.editors[name] = e
+			e.show()
+			return
+		}
+	}
+}
+
+func (g *gui) closeEditor(e *profileEditor) {
+	delete(g.editors, e.origName())
+	for i, x := range g.newEditor {
+		if x == e {
+			g.newEditor = append(g.newEditor[:i], g.newEditor[i+1:]...)
+			break
+		}
+	}
 }
 
 func (g *gui) openManager() {
