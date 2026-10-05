@@ -70,13 +70,14 @@ func (m *managerWindow) build() {
 	m.w.SetTitle(i18n.T("mgr.title"))
 	m.table = widget.NewTableWithHeaders(
 		func() (int, int) { return len(m.status), len(managerColumns) },
-		func() fyne.CanvasObject { return widget.NewLabel("placeholder-text") },
+		func() fyne.CanvasObject { return newTableCell(m) },
 		func(id widget.TableCellID, o fyne.CanvasObject) {
-			l := o.(*widget.Label)
+			c := o.(*tableCell)
 			s := m.status[id.Row]
-			l.SetText(managerColumns[id.Col].value(s))
-			l.TextStyle.Bold = s.Name == m.selected
-			l.Refresh()
+			c.row = id.Row
+			c.SetText(managerColumns[id.Col].value(s))
+			c.TextStyle.Bold = s.Name == m.selected
+			c.Refresh()
 		},
 	)
 	m.table.ShowHeaderColumn = false
@@ -190,6 +191,63 @@ func (m *managerWindow) refresh() {
 		m.connectBtn.Enable()
 		m.disconnectBtn.Disable()
 	}
+}
+
+// tableCell は表のセル。クリックで行を選択し、ダブルクリックでプロパティ、右クリックで操作メニューを出す。
+// (Table 既定の選択処理の代わりにセル自身がタップを受ける)
+type tableCell struct {
+	widget.Label
+	m   *managerWindow
+	row int
+}
+
+func newTableCell(m *managerWindow) *tableCell {
+	c := &tableCell{m: m}
+	c.Text = "placeholder-text"
+	c.ExtendBaseWidget(c)
+	return c
+}
+
+func (c *tableCell) Tapped(*fyne.PointEvent) { c.m.selectRow(c.row) }
+
+func (c *tableCell) DoubleTapped(*fyne.PointEvent) {
+	c.m.selectRow(c.row)
+	c.m.g.openEditor(c.m.selected)
+}
+
+func (c *tableCell) TappedSecondary(e *fyne.PointEvent) {
+	c.m.selectRow(c.row)
+	c.m.showContextMenu(e.AbsolutePosition)
+}
+
+func (m *managerWindow) selectRow(row int) {
+	if row >= 0 && row < len(m.status) {
+		m.table.Select(widget.TableCellID{Row: row, Col: 0})
+	}
+}
+
+// showContextMenu は選択中の接続設定の操作メニュー (接続/切断・プロパティ・削除) を出す。
+func (m *managerWindow) showContextMenu(pos fyne.Position) {
+	s := findStatus(m.status, m.selected)
+	if s == nil {
+		return
+	}
+	name := s.Name
+	connect := fyne.NewMenuItem(i18n.T("btn.connect"), func() { m.g.connect(name) })
+	disconnect := fyne.NewMenuItem(i18n.T("btn.disconnect"), func() { m.g.disconnect(name) })
+	if isActive(s.State) {
+		connect.Disabled = true
+	} else {
+		disconnect.Disabled = true
+	}
+	menu := fyne.NewMenu("",
+		connect,
+		disconnect,
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem(i18n.T("tray.properties"), func() { m.g.openEditor(name) }),
+		fyne.NewMenuItem(i18n.T("btn.delete")+"…", m.remove),
+	)
+	widget.ShowPopUpMenuAtPosition(menu, m.w.Canvas(), pos)
 }
 
 func (m *managerWindow) remove() {

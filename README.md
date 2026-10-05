@@ -63,7 +63,7 @@ Tray menu → **Connection Manager…**.
 
 | Area | Shows |
 |---|---|
-| Toolbar | Connect / Disconnect / New / Properties / Delete for the selected profile |
+| Toolbar | Connect / Disconnect / New / Properties / Delete for the selected profile. The same actions are in the right-click menu of each row; double-click opens Properties |
 | Table | State, mode, server, hub, IP address, received, sent, uptime (refreshed every 2 seconds) |
 | Bottom pane | Gateway, DNS, virtual NIC, SOCKS5 address, forwards, session, server build, packet counts |
 
