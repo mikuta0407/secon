@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"os/user"
 	"runtime"
+	"sync"
 	"syscall"
 
 	"github.com/mikuta0407/secon/internal/api"
@@ -48,15 +50,8 @@ func runDaemon(args []string) error {
 		return err
 	}
 	defer os.Remove(*socket)
-	srv := &api.Server{Manager: m, Reload: func() error {
-		c, err := config.Load(*cfgPath)
-		if err != nil {
-			return err
-		}
-		m.Apply(c)
-		log.Printf("config reloaded")
-		return nil
-	}}
+	store := &configStore{path: *cfgPath, cfg: cfg, m: m}
+	srv := &api.Server{Manager: m, Store: store, Reload: store.reload}
 	go func() {
 		if err := srv.Serve(ln); err != nil {
 			log.Printf("api: %v", err)
@@ -79,6 +74,82 @@ func runDaemon(args []string) error {
 			}
 		}
 	}
+}
+
+// configStore は設定ファイルとデーモンの状態を同期させる。
+type configStore struct {
+	path string
+	m    *engine.Manager
+
+	mu  sync.Mutex
+	cfg *config.Config
+}
+
+func (s *configStore) reload() error {
+	c, err := config.Load(s.path)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.cfg = c
+	s.mu.Unlock()
+	s.m.Apply(c)
+	log.Printf("config reloaded")
+	return nil
+}
+
+func (s *configStore) Profiles() []config.Profile {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]config.Profile(nil), s.cfg.Profiles...)
+}
+
+// update は設定を変更して検証・保存・反映する。
+func (s *configStore) update(f func(c *config.Config) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := *s.cfg
+	next.Profiles = append([]config.Profile(nil), s.cfg.Profiles...)
+	if err := f(&next); err != nil {
+		return err
+	}
+	if err := next.Validate(); err != nil {
+		return err
+	}
+	if err := config.Save(s.path, &next); err != nil {
+		return err
+	}
+	s.cfg = &next
+	s.m.Apply(&next)
+	return nil
+}
+
+func (s *configStore) PutProfile(oldName string, p config.Profile) error {
+	return s.update(func(c *config.Config) error {
+		if oldName == "" {
+			c.Profiles = append(c.Profiles, p)
+			return nil
+		}
+		for i := range c.Profiles {
+			if c.Profiles[i].Name == oldName {
+				c.Profiles[i] = p
+				return nil
+			}
+		}
+		return fmt.Errorf("%w: %s", engine.ErrNoProfile, oldName)
+	})
+}
+
+func (s *configStore) DeleteProfile(name string) error {
+	return s.update(func(c *config.Config) error {
+		for i := range c.Profiles {
+			if c.Profiles[i].Name == name {
+				c.Profiles = append(c.Profiles[:i], c.Profiles[i+1:]...)
+				return nil
+			}
+		}
+		return fmt.Errorf("%w: %s", engine.ErrNoProfile, name)
+	})
 }
 
 // defaultAPIGroup は root デーモンのソケットを操作できるグループの既定値。

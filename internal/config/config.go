@@ -21,53 +21,53 @@ const (
 
 // Config は設定ファイル全体。
 type Config struct {
-	API      API       `toml:"api"`
-	Profiles []Profile `toml:"profile"`
+	API      API       `toml:"api,omitempty" json:"api,omitempty"`
+	Profiles []Profile `toml:"profile" json:"profile"`
 }
 
 // API はデーモンの制御用ソケット設定。
 type API struct {
-	Socket string `toml:"socket"` // 空なら既定
-	Group  string `toml:"group"`  // ソケットを操作できるグループ (root 実行時)
+	Socket string `toml:"socket,omitempty" json:"socket,omitempty"` // 空なら既定
+	Group  string `toml:"group,omitempty" json:"group,omitempty"`   // ソケットを操作できるグループ (root 実行時)
 }
 
 // Profile は 1 つの VPN 接続設定。
 type Profile struct {
-	Name        string `toml:"name"`
-	Server      string `toml:"server"` // host:port (port 省略時 443)
-	Hub         string `toml:"hub"`
-	User        string `toml:"user"`
-	Password    string `toml:"password"` // 空なら匿名認証
-	Mode        string `toml:"mode"`     // "socks" | "nic"
-	AutoConnect bool   `toml:"auto_connect"`
+	Name        string `toml:"name" json:"name"`
+	Server      string `toml:"server" json:"server"` // host:port (port 省略時 443)
+	Hub         string `toml:"hub" json:"hub"`
+	User        string `toml:"user" json:"user"`
+	Password    string `toml:"password,omitempty" json:"password,omitempty"` // 空なら匿名認証
+	Mode        string `toml:"mode,omitempty" json:"mode,omitempty"`         // "socks" | "nic"
+	AutoConnect bool   `toml:"auto_connect,omitempty" json:"auto_connect,omitempty"`
 
 	// サーバ証明書の検証。CertSHA256 があればピン留め、Insecure なら検証しない、どちらも無ければ OS の信頼ストア
-	CertSHA256 string `toml:"cert_sha256"`
-	Insecure   bool   `toml:"insecure_skip_verify"`
+	CertSHA256 string `toml:"cert_sha256,omitempty" json:"cert_sha256,omitempty"`
+	Insecure   bool   `toml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
 
-	Proxy string `toml:"proxy"` // http://[user:pass@]host:port
+	Proxy string `toml:"proxy,omitempty" json:"proxy,omitempty"` // http://[user:pass@]host:port
 
-	Socks    Socks     `toml:"socks"`
-	NIC      NIC       `toml:"nic"`
-	Forwards []Forward `toml:"forward"`
+	Socks    Socks     `toml:"socks,omitempty" json:"socks,omitempty"`
+	NIC      NIC       `toml:"nic,omitempty" json:"nic,omitempty"`
+	Forwards []Forward `toml:"forward,omitempty" json:"forward,omitempty"`
 }
 
 type Socks struct {
-	Listen   string `toml:"listen"` // 既定 127.0.0.1:1080
-	Username string `toml:"username"`
-	Password string `toml:"password"`
+	Listen   string `toml:"listen,omitempty" json:"listen,omitempty"` // 既定 127.0.0.1:1080
+	Username string `toml:"username,omitempty" json:"username,omitempty"`
+	Password string `toml:"password,omitempty" json:"password,omitempty"`
 }
 
 type NIC struct {
-	DefaultGateway bool     `toml:"default_gateway"`
-	Routes         []string `toml:"routes"`
-	DNS            bool     `toml:"dns"`         // VPN 側 DNS を OS に設定する
-	DNSDomains     []string `toml:"dns_domains"` // VPN 側 DNS で解決するドメイン (省略時は DHCP のドメイン名)
+	DefaultGateway bool     `toml:"default_gateway,omitempty" json:"default_gateway,omitempty"`
+	Routes         []string `toml:"routes,omitempty" json:"routes,omitempty"`
+	DNS            bool     `toml:"dns,omitempty" json:"dns,omitempty"`                 // VPN 側 DNS を OS に設定する
+	DNSDomains     []string `toml:"dns_domains,omitempty" json:"dns_domains,omitempty"` // VPN 側 DNS で解決するドメイン (省略時は DHCP のドメイン名)
 }
 
 type Forward struct {
-	Listen string `toml:"listen"`
-	Target string `toml:"target"`
+	Listen string `toml:"listen,omitempty" json:"listen,omitempty"`
+	Target string `toml:"target,omitempty" json:"target,omitempty"`
 }
 
 // DefaultPath は既定の設定ファイルパス。
@@ -98,6 +98,11 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) normalize() error {
+	return c.Validate()
+}
+
+// Validate は全プロファイルを検証し、既定値を補う。
+func (c *Config) Validate() error {
 	seen := map[string]bool{}
 	for i := range c.Profiles {
 		p := &c.Profiles[i]
@@ -108,14 +113,15 @@ func (c *Config) normalize() error {
 			return fmt.Errorf("profile %q: duplicate name", p.Name)
 		}
 		seen[p.Name] = true
-		if err := p.normalize(); err != nil {
+		if err := p.Normalize(); err != nil {
 			return fmt.Errorf("profile %q: %w", p.Name, err)
 		}
 	}
 	return nil
 }
 
-func (p *Profile) normalize() error {
+// Normalize はプロファイルを検証し、既定値を補う。
+func (p *Profile) Normalize() error {
 	if p.Server == "" {
 		return errors.New("server is required")
 	}
@@ -159,6 +165,23 @@ func (p *Profile) normalize() error {
 		}
 	}
 	return nil
+}
+
+// Save は設定をファイルに書く (0600)。コメントは保持されない。
+func Save(path string, c *Config) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	var b strings.Builder
+	b.WriteString("# secon 設定ファイル (secon が書き換えることがあります)\n\n")
+	if err := toml.NewEncoder(&b).Encode(c); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // ProxyURL はプロキシ URL (未設定なら nil)。

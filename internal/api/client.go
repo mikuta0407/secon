@@ -2,10 +2,12 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/mikuta0407/secon/internal/config"
 	"github.com/mikuta0407/secon/internal/engine"
 )
 
@@ -36,7 +39,19 @@ func NewClient(socket string) *Client {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, method, "http://secon"+path, nil)
+	return c.doBody(ctx, method, path, nil, out)
+}
+
+func (c *Client) doBody(ctx context.Context, method, path string, in, out any) error {
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, "http://secon"+path, body)
 	if err != nil {
 		return err
 	}
@@ -91,6 +106,24 @@ func (c *Client) dialError(err error) error {
 		return fmt.Errorf("daemon is not running (%s); start it with 'secon service install'", c.Socket)
 	}
 	return fmt.Errorf("cannot reach daemon (%s): %w", c.Socket, err)
+}
+
+// Profiles は設定済みプロファイル (パスワードを含む) を返す。
+func (c *Client) Profiles(ctx context.Context) ([]config.Profile, error) {
+	var ps []config.Profile
+	return ps, c.do(ctx, http.MethodGet, "/v1/config/profiles", &ps)
+}
+
+// PutProfile はプロファイルを保存する。oldName が空なら追加、そうでなければ置き換え (改名可)。
+func (c *Client) PutProfile(ctx context.Context, oldName string, p config.Profile) error {
+	if oldName == "" {
+		return c.doBody(ctx, http.MethodPost, "/v1/config/profiles", p, nil)
+	}
+	return c.doBody(ctx, http.MethodPut, "/v1/config/profiles/"+url.PathEscape(oldName), p, nil)
+}
+
+func (c *Client) DeleteProfile(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/config/profiles/"+url.PathEscape(name), nil)
 }
 
 // Events は状態変化のたびに fn を呼ぶ。ctx が終わるか接続が切れると戻る。

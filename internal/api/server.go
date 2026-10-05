@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -11,12 +12,21 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/mikuta0407/secon/internal/config"
 	"github.com/mikuta0407/secon/internal/engine"
 )
+
+// Store はプロファイル設定の読み書き (設定ファイルへの保存とデーモンへの反映を行う)。
+type Store interface {
+	Profiles() []config.Profile
+	PutProfile(oldName string, p config.Profile) error // oldName が空なら追加
+	DeleteProfile(name string) error
+}
 
 // Server は制御 API サーバ。
 type Server struct {
 	Manager *engine.Manager
+	Store   Store
 	Reload  func() error // 設定ファイルの再読み込み
 	srv     *http.Server
 }
@@ -65,6 +75,10 @@ func (s *Server) Serve(ln net.Listener) error {
 	mux.HandleFunc("POST /v1/profiles/{name}/disconnect", s.disconnect)
 	mux.HandleFunc("POST /v1/reload", s.reload)
 	mux.HandleFunc("GET /v1/events", s.events)
+	mux.HandleFunc("GET /v1/config/profiles", s.listProfiles)
+	mux.HandleFunc("POST /v1/config/profiles", s.putProfile)
+	mux.HandleFunc("PUT /v1/config/profiles/{name}", s.putProfile)
+	mux.HandleFunc("DELETE /v1/config/profiles/{name}", s.deleteProfile)
 	s.srv = &http.Server{Handler: mux}
 	err := s.srv.Serve(ln)
 	if errors.Is(err, http.ErrServerClosed) {
@@ -117,6 +131,31 @@ func (s *Server) disconnect(w http.ResponseWriter, r *http.Request) {
 func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
 	if err := s.Reload(); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody{err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, struct{}{})
+}
+
+func (s *Server) listProfiles(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.Store.Profiles())
+}
+
+func (s *Server) putProfile(w http.ResponseWriter, r *http.Request) {
+	var p config.Profile
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&p); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody{err.Error()})
+		return
+	}
+	if err := s.Store.PutProfile(r.PathValue("name"), p); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody{err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, struct{}{})
+}
+
+func (s *Server) deleteProfile(w http.ResponseWriter, r *http.Request) {
+	if err := s.Store.DeleteProfile(r.PathValue("name")); err != nil {
+		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})

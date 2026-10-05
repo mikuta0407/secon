@@ -6,6 +6,9 @@ import (
 	"os"
 )
 
+// version はリリースビルドで -ldflags "-X main.version=..." により埋め込む。
+var version = "dev"
+
 const usageText = `usage: secon <command> [args]
 
 commands:
@@ -16,6 +19,7 @@ commands:
   service install|uninstall [--user]
                          launchd / systemd に登録・解除する
   daemon [flags]         デーモンとして起動する (通常は launchd / systemd から)
+  version                バージョンを表示する
   debug dump|socks       開発用 (デーモンを使わずに直接接続する)
 `
 
@@ -40,6 +44,9 @@ func main() {
 		err = runDaemon(args)
 	case "debug":
 		err = runDebug(args)
+	case "version", "--version":
+		fmt.Println("secon", version)
+		return
 	case "help", "-h", "--help":
 		fmt.Print(usageText)
 		return
