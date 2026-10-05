@@ -32,6 +32,36 @@ type profileEditor struct {
 	socksListen, routes, dnsDomains, forwards      *widget.Entry
 	mode                                           *widget.RadioGroup
 	autoConnect, insecure, defaultGW, dns          *widget.Check
+
+	form               *fyne.Container
+	socksRows, nicRows []formRow
+	dnsDomainRow       formRow
+}
+
+// formRow はフォームの 1 行 (ラベルと入力欄)。
+type formRow struct{ label, input fyne.CanvasObject }
+
+func (r formRow) setVisible(v bool) {
+	for _, o := range []fyne.CanvasObject{r.label, r.input} {
+		if v {
+			o.Show()
+		} else {
+			o.Hide()
+		}
+	}
+}
+
+// updateVisibility は選択中のモードで使う項目だけを表示する。
+func (e *profileEditor) updateVisibility() {
+	nic := e.mode.Selected == config.ModeNIC
+	for _, r := range e.socksRows {
+		r.setVisible(!nic)
+	}
+	for _, r := range e.nicRows {
+		r.setVisible(nic)
+	}
+	e.dnsDomainRow.setVisible(nic && e.dns.Checked)
+	e.form.Refresh()
 }
 
 func newProfileEditor(g *gui, orig *config.Profile) *profileEditor {
@@ -69,24 +99,32 @@ func newProfileEditor(g *gui, orig *config.Profile) *profileEditor {
 	e.forwards = widget.NewMultiLineEntry()
 	e.forwards.SetPlaceHolder("127.0.0.1:13389=10.0.0.5:3389 (1 行に 1 つ)")
 
-	form := widget.NewForm(
-		widget.NewFormItem("接続設定名", e.name),
-		widget.NewFormItem("サーバ", e.server),
-		widget.NewFormItem("仮想 HUB", e.hub),
-		widget.NewFormItem("ユーザ名", e.user),
-		widget.NewFormItem("パスワード", e.password),
-		widget.NewFormItem("モード", e.mode),
-		widget.NewFormItem("", e.autoConnect),
-		widget.NewFormItem("証明書", e.cert),
-		widget.NewFormItem("", e.insecure),
-		widget.NewFormItem("HTTP Proxy", e.proxy),
-		widget.NewFormItem("SOCKS5 待受", e.socksListen),
-		widget.NewFormItem("経路", e.routes),
-		widget.NewFormItem("", e.defaultGW),
-		widget.NewFormItem("", e.dns),
-		widget.NewFormItem("DNS ドメイン", e.dnsDomains),
-		widget.NewFormItem("ポート転送", e.forwards),
-	)
+	// モードによって使う項目だけを表示する。widget.Form は行を隠せないので
+	// FormLayout で組む (ラベルと入力欄の両方が非表示の行は詰めて表示される)
+	e.form = container.New(layout.NewFormLayout())
+	row := func(label string, w fyne.CanvasObject) formRow {
+		l := widget.NewLabelWithStyle(label, fyne.TextAlignTrailing, fyne.TextStyle{Bold: true})
+		e.form.Add(l)
+		e.form.Add(w)
+		return formRow{l, w}
+	}
+	row("接続設定名", e.name)
+	row("サーバ", e.server)
+	row("仮想 HUB", e.hub)
+	row("ユーザ名", e.user)
+	row("パスワード", e.password)
+	row("モード", e.mode)
+	row("", e.autoConnect)
+	row("証明書", e.cert)
+	row("", e.insecure)
+	row("HTTP Proxy", e.proxy)
+	e.socksRows = []formRow{row("SOCKS5 待受", e.socksListen)}
+	e.nicRows = []formRow{row("経路", e.routes), row("", e.defaultGW), row("", e.dns)}
+	e.dnsDomainRow = row("DNS ドメイン", e.dnsDomains)
+	row("ポート転送", e.forwards)
+	e.mode.OnChanged = func(string) { e.updateVisibility() }
+	e.dns.OnChanged = func(bool) { e.updateVisibility() }
+	form := e.form
 
 	saveBtn := widget.NewButtonWithIcon("保存", theme.DocumentSaveIcon(), e.save)
 	saveBtn.Importance = widget.HighImportance
@@ -193,6 +231,7 @@ func (e *profileEditor) fill(p config.Profile) {
 		fw = append(fw, f.Listen+"="+f.Target)
 	}
 	e.forwards.SetText(strings.Join(fw, "\n"))
+	e.updateVisibility()
 }
 
 func splitList(s, sep string) []string {
@@ -224,8 +263,12 @@ func (e *profileEditor) collect() (config.Profile, error) {
 			DNSDomains:     splitList(e.dnsDomains.Text, ","),
 		},
 	}
+	// 表示していない (別モード用の) 項目は保存しない
 	if p.Mode == config.ModeSocks {
 		p.Socks.Listen = strings.TrimSpace(e.socksListen.Text)
+		p.NIC = config.NIC{}
+	} else if !p.NIC.DNS {
+		p.NIC.DNSDomains = nil
 	}
 	if e.orig != nil {
 		// フォームに無い項目は元の値を引き継ぐ
