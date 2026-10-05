@@ -26,9 +26,11 @@ jobs:
         id: meta
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HAS_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY != '' && 'yes' || '' }}
         run: |
           set -euo pipefail
-          tag="${{ github.event.inputs.tag }}"
+          # workflow_run では Release を起動したタグ (head_branch) を使う。手動実行で未指定なら最新の正式リリース
+          tag="${{ github.event.inputs.tag || github.event.workflow_run.head_branch }}"
           if [ -z "$tag" ]; then
             tag="$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)"
           fi
@@ -37,6 +39,9 @@ jobs:
           if [[ "$tag" =~ -rc\.[0-9]+$ ]]; then
             echo "is_rc=true" >> "$GITHUB_OUTPUT"
             echo "::notice::$tag is a release candidate; tap will not be updated."
+          elif [ -z "${HAS_DEPLOY_KEY}" ]; then
+            echo "is_rc=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::HOMEBREW_TAP_DEPLOY_KEY is not set; tap will not be updated."
           else
             echo "is_rc=false" >> "$GITHUB_OUTPUT"
           fi
