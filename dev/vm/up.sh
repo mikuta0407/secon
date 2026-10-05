@@ -10,7 +10,7 @@ for vm in vpn-server client-linux; do
   limactl list --format '{{.Status}}' "$vm" | grep -q Running || limactl start --tty=false "$vm"
 done
 if tart list --quiet 2>/dev/null | grep -qx client-mac && ! tart ip client-mac >/dev/null 2>&1; then
-  nohup tart run --no-graphics client-mac >"$STATE_DIR/client-mac.log" 2>&1 &
+  nohup tart run --vnc-experimental client-mac >"$STATE_DIR/client-mac.log" 2>&1 &
 fi
 
 SERVER=$(lima_ip vpn-server)

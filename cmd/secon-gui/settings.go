@@ -111,8 +111,8 @@ func newSettingsWindow(g *gui) *settingsWindow {
 
 func (s *settingsWindow) show() {
 	s.reload("")
+	activate() // 表示前にアプリを前面化しないと他アプリのウィンドウの後ろに出る (macOS)
 	s.w.Show()
-	activate()
 	s.w.RequestFocus()
 }
 

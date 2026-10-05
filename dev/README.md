@@ -31,3 +31,10 @@ source dev/vm/env.sh         # mac_ssh / mac_scp / lima_ip などのヘルパー
 | `dev/vm/official-client-check.sh` | 公式クライアントでサーバ環境自体を確認 |
 
 デーモンはテスト中も `timeout` で必ず終了し、SIGTERM で経路・NIC・DNS を片付ける。
+
+## macOS VM での GUI 確認
+
+VM にはハードウェア描画の OpenGL が無いので、`dev/macgui/build.sh` で GLFW の要求を外したテスト用ビルドを作る。
+GUI セッションでの実行は `dev/macgui/run.sh <cmd>` (ssh からはウィンドウサーバに届かないため)。
+`click X Y [move]` でクリック/カーソル移動 (座標はポイント)、`wins secon` でウィンドウ一覧、`screencapture -x` で画面取得。
+VM は画面付きで起動しておくこと (`tart run --vnc-experimental client-mac`。`--no-graphics` だとディスプレイが無い)。

@@ -21,6 +21,11 @@ type gui struct {
 	desk   desktop.App
 	client *api.Client
 
+	// トレイのメニューは同じオブジェクトを使い回して Items だけ差し替える。
+	// Fyne はトレイ初期化完了時に最初に渡された Menu で作り直すため、
+	// 毎回新しい Menu を渡すと起動直後の更新が古いメニューで上書きされる (macOS で確認)。
+	menu *fyne.Menu
+
 	status    []engine.Status
 	daemonErr error
 	settings  *settingsWindow
@@ -35,8 +40,16 @@ func main() {
 	if !ok {
 		log.Fatal("system tray is not supported on this platform")
 	}
-	g := &gui{app: a, desk: desk, client: api.NewClient(api.ClientSocket())}
-	a.Lifecycle().SetOnStarted(hideDock)
+	g := &gui{app: a, desk: desk, client: api.NewClient(api.ClientSocket()), menu: fyne.NewMenu("secon")}
+	a.Lifecycle().SetOnStarted(func() {
+		hideDock()
+		// トレイの初期化完了前に設定したアイコンは反映されないことがある (macOS)。
+		// 完了を知る API が無いので、起動後に少し待って描き直す
+		go func() {
+			time.Sleep(2 * time.Second)
+			fyne.Do(g.render)
+		}()
+	})
 	g.render()
 	go g.watch()
 	if *openSettings {
@@ -48,6 +61,7 @@ func main() {
 // watch はデーモンのイベントを購読し、切れたら再接続する。
 func (g *gui) watch() {
 	for {
+		log.Printf("connecting to daemon (%s)", g.client.Socket)
 		err := g.client.Events(context.Background(), func(st []engine.Status) {
 			fyne.Do(func() {
 				g.notifyChanges(st)
@@ -58,6 +72,7 @@ func (g *gui) watch() {
 		if err == nil {
 			err = fmt.Errorf("connection to daemon closed")
 		}
+		log.Printf("daemon: %v", err)
 		fyne.Do(func() {
 			g.status, g.daemonErr = nil, err
 			g.render()
@@ -127,11 +142,15 @@ func (g *gui) render() {
 		items = append(items, it)
 	}
 
+	quit := fyne.NewMenuItem("終了", g.app.Quit)
+	quit.IsQuit = true
 	items = append(items,
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("設定…", g.openSettings),
+		quit,
 	)
-	g.desk.SetSystemTrayMenu(fyne.NewMenu("secon", items...))
+	g.menu.Items = items
+	g.desk.SetSystemTrayMenu(g.menu)
 	if connected {
 		g.desk.SetSystemTrayIcon(iconConnected)
 	} else {
