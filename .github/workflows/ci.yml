@@ -31,7 +31,17 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go build -o /dev/null ./cmd/secon-gui
+      - name: Build secon.app
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
+          CGO_CFLAGS: -mmacosx-version-min=12.0
+          CGO_LDFLAGS: -mmacosx-version-min=12.0
+        run: |
+          mkdir -p out
+          CGO_ENABLED=0 go build -o out/secon ./cmd/secon
+          go build -o out/secon-gui ./cmd/secon-gui
+          packaging/macos/build-app.sh out/secon-gui out/secon 0.0.0-ci out
+          otool -l out/secon.app/Contents/MacOS/secon-gui | grep -A3 LC_BUILD_VERSION | grep "minos 12.0"
 
   build-gui-linux:
     runs-on: ubuntu-latest

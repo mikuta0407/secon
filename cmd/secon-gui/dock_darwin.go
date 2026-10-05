@@ -3,19 +3,25 @@ package main
 /*
 #cgo CFLAGS: -x objective-c
 #cgo LDFLAGS: -framework Cocoa
-#import <Cocoa/Cocoa.h>
-
-// メニューバー常駐アプリとして Dock にアイコンを出さない
-static void seconHideDock(void) {
-	[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-}
-
-// Dock に出ないアプリはウィンドウを開いても前面に来ないので明示的に前面化する
-static void seconActivate(void) {
-	[NSApp activateIgnoringOtherApps:YES];
-}
+void seconHideDock(void);
+void seconActivate(void);
+void seconInstallReopenHandler(void);
 */
 import "C"
 
-func hideDock() { C.seconHideDock() }
+// onReopen は起動中にアプリをもう一度開いたとき (Launchpad・Finder など) に呼ばれる。
+var onReopen func()
+
+//export seconReopen
+func seconReopen() {
+	if onReopen != nil {
+		onReopen()
+	}
+}
+
+func hideDock() {
+	C.seconHideDock()
+	C.seconInstallReopenHandler()
+}
+
 func activate() { C.seconActivate() }

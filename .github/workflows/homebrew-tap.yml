@@ -1,6 +1,7 @@
 name: Update Homebrew Tap
 
-# 最新の (プレリリースでない) Release を mikuta0407/homebrew-apps の Formula/secon.rb に反映する。
+# 最新の (プレリリースでない) Release を mikuta0407/homebrew-apps の Formula/secon.rb (CLI) と
+# Casks/secon.rb (macOS の secon.app) に反映する。
 # Release ワークフローの完了後に動く (release イベントだとアセットのアップロード前に走るため)。
 # 注意: Homebrew は Release のアセットを匿名でダウンロードするので、このリポジトリが
 # private の間は formula を更新してもインストールできない。
@@ -134,13 +135,53 @@ jobs:
           EOF
           ruby -c tap/Formula/secon.rb
 
+          # macOS 向け Cask: secon.app を /Applications に入れ (Launchpad から起動できる)、secon コマンドもリンクする
+          mkdir -p tap/Casks
+          cat > tap/Casks/secon.rb <<EOF
+          cask "secon" do
+            version "${VERSION}"
+            sha256 "${sha_mac_arm}"
+
+            url "https://github.com/${repo}/releases/download/v#{version}/secon-v#{version}-macos-arm64.tar.gz"
+            name "secon"
+            desc "SoftEther VPN compatible client with virtual NIC and SOCKS5 modes"
+            homepage "https://github.com/${repo}"
+
+            depends_on arch: :arm64
+            depends_on macos: ">= :monterey"
+
+            app "secon.app"
+            binary "#{appdir}/secon.app/Contents/MacOS/secon"
+
+            # 公証していない (ad-hoc 署名) ので、Gatekeeper の quarantine 属性を外す
+            postflight do
+              system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{appdir}/secon.app"]
+            end
+
+            uninstall quit: "io.github.mikuta0407.secon"
+
+            zap trash: [
+              "~/Library/LaunchAgents/io.github.mikuta0407.secon-gui.plist",
+              "~/Library/Preferences/fyne/io.github.mikuta0407.secon",
+              "~/Library/Caches/secon",
+            ]
+
+            caveats <<~CAVEATS
+              Register the daemon (the virtual NIC mode needs root):
+                sudo secon service install
+              Then open secon from Launchpad and add a profile.
+            CAVEATS
+          end
+          EOF
+          ruby -c tap/Casks/secon.rb
+
       - name: Commit & push to tap
         if: steps.meta.outputs.is_rc == 'false'
         working-directory: tap
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/secon.rb
+          git add Formula/secon.rb Casks/secon.rb
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else

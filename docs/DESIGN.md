@@ -202,7 +202,8 @@ internal/
   engine/        プロファイルごとの接続ループ・再接続・リスナ、モード (socks / nic)
   api/           Unix socket 上の HTTP+JSON (サーバ / クライアント, SSE)
   config/  service/
-.github/workflows/  CI・Release・Homebrew tap 更新 (formula はワークフローが生成)
+.github/workflows/  CI・Release・Homebrew tap 更新 (Formula と Cask はワークフローが生成)
+packaging/       macOS の secon.app (Info.plist・アイコン・build-app.sh)、Linux の .desktop
 dev/             開発用 VM 環境とテストスクリプト (dev/README.md)
 ```
 

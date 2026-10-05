@@ -1,7 +1,8 @@
 name: Release
 
 # v* タグの push (または手動実行) で macOS (arm64) / Linux (amd64, arm64) の
-# バイナリを作り GitHub Release に公開する。-rc.N で終わるタグはプレリリース。
+# バイナリを作り GitHub Release に公開する。macOS の tarball には secon.app も入る。
+# -rc.N で終わるタグはプレリリース。
 on:
   push:
     tags:
@@ -58,7 +59,11 @@ jobs:
           mkdir -p out
           CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${tag#v}" -o out/secon ./cmd/secon
           if [ "${{ matrix.gui }}" = "true" ]; then
+            # ランナーの macOS より古い OS (12 以降) でも起動できるようにする
+            export MACOSX_DEPLOYMENT_TARGET=12.0 CGO_CFLAGS=-mmacosx-version-min=12.0 CGO_LDFLAGS=-mmacosx-version-min=12.0
             CGO_ENABLED=1 go build -trimpath -ldflags "-s -w" -o out/secon-gui ./cmd/secon-gui
+            # Launchpad から起動できる secon.app (Homebrew Cask が /Applications に入れる)
+            packaging/macos/build-app.sh out/secon-gui out/secon "${tag#v}" out
           fi
           ./out/secon version || true
 

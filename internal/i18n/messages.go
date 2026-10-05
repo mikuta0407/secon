@@ -208,6 +208,7 @@ commands:
 	"tray.forward":    {"Forward: %s", "転送: %s"},
 	"tray.error":      {"Error: %s", "エラー: %s"},
 	"tray.language":   {"Language / 言語", ""},
+	"tray.autostart":  {"Start at Login", "ログイン時に起動"},
 	"lang.auto":       {"Automatic", "自動"},
 	"lang.en":         {"English", ""},
 	"lang.ja":         {"日本語", ""},

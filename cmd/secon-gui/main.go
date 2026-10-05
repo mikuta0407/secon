@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -52,7 +53,17 @@ func main() {
 	editName := flag.String("edit", "", "open the properties of this profile at startup")
 	newProfile := flag.Bool("new", false, "open a new profile window at startup")
 	langFlag := flag.String("lang", "", "display language for this run: auto, en or ja (not saved)")
+	autostart := flag.Bool(autostartFlag[1:], false, "started at login: stay in the tray without opening a window")
 	flag.Parse()
+
+	// 二重起動しない。既に動いていれば、そちらに接続マネージャを開いてもらって終わる
+	instance, err := claimInstance()
+	if errors.Is(err, errAlreadyRunning) {
+		return
+	}
+	if err != nil {
+		log.Printf("single instance: %v", err)
+	}
 
 	a := app.NewWithID("io.github.mikuta0407.secon")
 	a.Settings().SetTheme(newCompactTheme())
@@ -65,6 +76,12 @@ func main() {
 		log.Fatal("system tray is not supported on this platform")
 	}
 	g := &gui{app: a, desk: desk, client: api.NewClient(api.ClientSocket()), menu: fyne.NewMenu("secon"), poll: make(chan struct{}, 1), editors: map[string]*profileEditor{}, opening: map[string]bool{}}
+	// 起動中にアプリをもう一度開いた (Launchpad 等) / 別の secon-gui が起動された → 接続マネージャを出す
+	onReopen = func() { fyne.Do(g.openManager) }
+	if instance != nil {
+		go serveInstance(instance, func() { fyne.Do(g.openManager) })
+		defer instance.Close()
+	}
 	a.Lifecycle().SetOnStarted(func() {
 		hideDock()
 		// トレイの初期化完了前に設定したアイコンは反映されないことがある (macOS)。
@@ -77,7 +94,8 @@ func main() {
 	g.render()
 	go g.watch()
 	go g.pollLoop()
-	if *openManager {
+	// 手で起動したら (Launchpad・Finder・ターミナル) 接続マネージャを開く。ログイン時の自動起動ではトレイだけ
+	if *openManager || (!*autostart && *editName == "" && !*newProfile) {
 		g.openManager()
 	}
 	if *editName != "" {
@@ -194,7 +212,7 @@ func (g *gui) notifyChanges(next []engine.Status) {
 // (作り直すと開いているメニューが閉じたりちらついたりする)。
 func (g *gui) traySignature() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s|%v|", i18n.Current(), g.daemonErr)
+	fmt.Fprintf(&b, "%s|%v|%v|", i18n.Current(), g.daemonErr, autostartEnabled())
 	if g.daemonErr == nil {
 		for _, s := range g.status {
 			fmt.Fprintf(&b, "%s/%s/%s/%s/%s/%v/%s;", s.Name, s.State, s.Mode, s.Address, s.Socks, s.Forwards, s.Error)
@@ -240,9 +258,12 @@ func (g *gui) render() {
 	quit.IsQuit = true
 	lang := fyne.NewMenuItem(i18n.T("tray.language"), nil)
 	lang.ChildMenu = g.languageMenu()
+	auto := fyne.NewMenuItem(i18n.T("tray.autostart"), g.toggleAutostart)
+	auto.Checked = autostartEnabled()
 	items = append(items,
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem(i18n.T("tray.manager"), g.openManager),
+		auto,
 		lang,
 		quit,
 	)
@@ -284,6 +305,14 @@ func (g *gui) profileMenu(s engine.Status) *fyne.Menu {
 	}
 	items = append(items, fyne.NewMenuItem(i18n.T("tray.properties"), func() { g.openEditor(name) }))
 	return fyne.NewMenu(s.Name, items...)
+}
+
+// toggleAutostart はログイン時の自動起動を切り替える。
+func (g *gui) toggleAutostart() {
+	if err := setAutostart(!autostartEnabled()); err != nil {
+		g.app.SendNotification(fyne.NewNotification("secon", err.Error()))
+	}
+	g.render()
 }
 
 // languageMenu は表示言語の切り替えメニュー (自動 / English / 日本語)。

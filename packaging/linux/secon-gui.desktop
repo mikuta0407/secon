@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=secon
+GenericName=VPN Client
+Comment=SoftEther VPN compatible client
+Exec=secon-gui
+Icon=secon
+Terminal=false
+Categories=Network;
+StartupNotify=false

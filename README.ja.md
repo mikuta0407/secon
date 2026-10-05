@@ -1,7 +1,8 @@
 # secon
 
 ```sh
-brew install mikuta0407/apps/secon
+brew install --cask mikuta0407/apps/secon   # macOS: secon.app + secon コマンド
+brew install mikuta0407/apps/secon          # Linux: secon コマンド
 ```
 
 Go で書いた、macOS / Linux 向けの SoftEther VPN 互換クライアントです。
@@ -13,9 +14,9 @@ Go で書いた、macOS / Linux 向けの SoftEther VPN 互換クライアント
 
 ## 5 分で使い始める
 
-1. インストール: `brew install mikuta0407/apps/secon`
+1. インストール: `brew install --cask mikuta0407/apps/secon`（macOS・Apple Silicon）/ `brew install mikuta0407/apps/secon`（Linux）
 2. デーモンを登録: `sudo secon service install`
-3. 接続設定を追加: `secon-gui` を起動 → トレイの **接続マネージャ…** → **新規**
+3. 接続設定を追加: Launchpad から **secon** を開き（Linux は `secon-gui` を実行）、接続マネージャで **新規**
 4. 接続: **接続** ボタン、または `secon connect <接続設定名>`
 5. 確認: `secon status <接続設定名>` で IP アドレス・ゲートウェイ・通信量が見られます
 
@@ -43,8 +44,9 @@ GUI を使わない場合は、手順 3 で `/etc/secon/config.toml` を編集�
 
 `secon-gui` はメニューバー（macOS）/ システムトレイ（Linux）に常駐します。操作はすべてデーモン経由なので、先にデーモンを登録してください（`sudo secon service install`）。
 
-- macOS: Homebrew で `secon` と一緒に入ります
-- Linux: ソースからビルドします（[開発](#開発)）。トレイの表示には StatusNotifierItem 対応のパネルが必要です（GNOME なら AppIndicator 拡張）
+- macOS: `/Applications` の `secon.app`（Homebrew Cask で入ります）。Launchpad や Finder から開くと接続マネージャが開きます。起動中にもう一度開くと接続マネージャが前面に出ます
+- ログイン時に起動: トレイメニュー → **ログイン時に起動**（macOS は LaunchAgent、Linux は `~/.config/autostart`）。ログイン時はウィンドウを出さずトレイに常駐します
+- Linux: ソースからビルドします（[開発](#開発)）。トレイの表示には StatusNotifierItem 対応のパネルが必要です（GNOME なら AppIndicator 拡張）。アプリ一覧に出すには `install -Dm644 packaging/linux/secon-gui.desktop ~/.local/share/applications/secon-gui.desktop` と `install -Dm644 packaging/linux/secon.png ~/.local/share/icons/hicolor/256x256/apps/secon.png`
 - 表示言語: OS の言語に合わせて英語 / 日本語。トレイの **Language / 言語** → 自動 / English / 日本語 で切り替えられます
 
 ![トレイメニュー](docs/images/ja/tray.png)
@@ -176,7 +178,7 @@ NIC・SOCKS どちらのモードでも使えます。
 ## アンインストール
 
 1. `sudo secon service uninstall`
-2. `brew uninstall secon`
+2. `brew uninstall --cask secon`（macOS）/ `brew uninstall secon`（Linux）。`brew uninstall --zap --cask secon` なら GUI の設定とログイン項目も消します
 3. 必要なら `sudo rm -r /etc/secon`
 
 ## 開発
@@ -185,7 +187,7 @@ NIC・SOCKS どちらのモードでも使えます。
 - `docs/PROTOCOL.md`: SoftEther プロトコルのメモ
 - `dev/README.md`: VM（Lima + Tart）を使ったテスト環境
 
-ビルド: `go build ./cmd/secon`（Go のみ）、`go build ./cmd/secon-gui`（cgo が必要。Linux では X11 / OpenGL のヘッダも必要）
+ビルド: `go build ./cmd/secon`（Go のみ）、`go build ./cmd/secon-gui`（cgo が必要。Linux では X11 / OpenGL のヘッダも必要）。macOS のアプリ: `packaging/macos/build-app.sh secon-gui secon <バージョン> <出力先>`
 
 ## ライセンス
 

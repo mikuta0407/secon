@@ -1,7 +1,8 @@
 # secon
 
 ```sh
-brew install mikuta0407/apps/secon
+brew install --cask mikuta0407/apps/secon   # macOS: secon.app + secon command
+brew install mikuta0407/apps/secon          # Linux: secon command
 ```
 
 A SoftEther VPN compatible client for macOS and Linux, written in Go.
@@ -13,9 +14,9 @@ Connect as a virtual NIC, or keep everything inside the app and expose it as a S
 
 ## Quick start (about 5 minutes)
 
-1. Install: `brew install mikuta0407/apps/secon`
+1. Install: `brew install --cask mikuta0407/apps/secon` (macOS, Apple Silicon) or `brew install mikuta0407/apps/secon` (Linux)
 2. Register the daemon: `sudo secon service install`
-3. Add a profile: run `secon-gui`, open **Connection Manager…** from the tray, click **New**
+3. Add a profile: open **secon** from Launchpad (Linux: run `secon-gui`), click **New** in the connection manager
 4. Connect: click **Connect**, or run `secon connect <profile>`
 5. Check: `secon status <profile>` shows the IP address, gateway and traffic
 
@@ -43,8 +44,9 @@ Without the GUI, edit `/etc/secon/config.toml` in step 3 (see [Configuration](#c
 
 `secon-gui` lives in the menu bar (macOS) or the system tray (Linux). It only talks to the daemon, so start the daemon first (`sudo secon service install`).
 
-- macOS: installed by Homebrew together with `secon`.
-- Linux: build it from source (see [Development](#development)). The tray needs a StatusNotifierItem host (on GNOME: the AppIndicator extension).
+- macOS: `secon.app` in `/Applications` (installed by the Homebrew Cask). Open it from Launchpad or Finder; it opens the connection manager. Opening it again while it runs brings the connection manager back.
+- Start at login: tray menu → **Start at Login** (macOS: a LaunchAgent; Linux: `~/.config/autostart`). At login it stays in the tray without opening a window.
+- Linux: build it from source (see [Development](#development)). The tray needs a StatusNotifierItem host (on GNOME: the AppIndicator extension). To list it in the app menu: `install -Dm644 packaging/linux/secon-gui.desktop ~/.local/share/applications/secon-gui.desktop` and `install -Dm644 packaging/linux/secon.png ~/.local/share/icons/hicolor/256x256/apps/secon.png`.
 - Language: English or Japanese, chosen from the OS language. Change it from the tray menu: **Language / 言語** → Automatic / English / 日本語.
 
 ![Tray menu](docs/images/en/tray.png)
@@ -176,7 +178,7 @@ It works in both NIC and SOCKS modes.
 ## Uninstall
 
 1. `sudo secon service uninstall`
-2. `brew uninstall secon`
+2. `brew uninstall --cask secon` (macOS) or `brew uninstall secon` (Linux). `brew uninstall --zap --cask secon` also removes GUI settings and the login item
 3. Optional: `sudo rm -r /etc/secon`
 
 ## Development
@@ -185,7 +187,7 @@ It works in both NIC and SOCKS modes.
 - `docs/PROTOCOL.md`: SoftEther protocol notes
 - `dev/README.md`: VM-based test environment (Lima + Tart)
 
-Build: `go build ./cmd/secon` (pure Go) and `go build ./cmd/secon-gui` (needs cgo; on Linux also X11/OpenGL headers).
+Build: `go build ./cmd/secon` (pure Go) and `go build ./cmd/secon-gui` (needs cgo; on Linux also X11/OpenGL headers). macOS app bundle: `packaging/macos/build-app.sh secon-gui secon <version> <outdir>`.
 
 ## License
 
