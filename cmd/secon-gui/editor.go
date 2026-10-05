@@ -144,7 +144,7 @@ func newProfileEditor(g *gui, orig *config.Profile) *profileEditor {
 		)
 		e.fill(*orig)
 	} else {
-		e.fill(config.Profile{Hub: "VPN", Mode: config.ModeSocks})
+		e.fill(config.Profile{Hub: "VPN", Mode: config.ModeNIC})
 	}
 	e.w.SetContent(container.NewBorder(top, buttons, nil, nil, body))
 	e.w.Resize(fyne.NewSize(620, 600))
