@@ -1,0 +1,5 @@
+/secon
+/secon-gui
+/dist/
+*.pcap
+.DS_Store
