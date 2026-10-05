@@ -1,4 +1,5 @@
 // click X Y [move]  : 指定座標 (ポイント) を左クリックする (move なら移動のみ)
+// click drag X1 Y1 X2 Y2 : (X1,Y1) から (X2,Y2) へドラッグする (ウィンドウのタイトルバーを掴んで移動など)
 // click paste        : フォーカス中の欄を全選択してクリップボードの内容を貼り付ける (⌘A ⌘V)
 //                      文字入力イベントは GLFW に届かないことがあるので、入力は pbcopy + paste で行う
 #include <ApplicationServices/ApplicationServices.h>
@@ -12,6 +13,17 @@ static void key(CGKeyCode code, CGEventFlags flags) {
 }
 
 int main(int argc, char **argv) {
+  if (argc > 5 && !strcmp(argv[1], "drag")) {
+    CGPoint a = {atof(argv[2]), atof(argv[3])}, b = {atof(argv[4]), atof(argv[5])};
+    CGEventPost(kCGHIDEventTap, CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, a, kCGMouseButtonLeft)); usleep(100000);
+    CGEventPost(kCGHIDEventTap, CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDown, a, kCGMouseButtonLeft)); usleep(100000);
+    for (int i = 1; i <= 20; i++) {
+      CGPoint p = {a.x + (b.x - a.x) * i / 20, a.y + (b.y - a.y) * i / 20};
+      CGEventPost(kCGHIDEventTap, CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDragged, p, kCGMouseButtonLeft)); usleep(20000);
+    }
+    CGEventPost(kCGHIDEventTap, CGEventCreateMouseEvent(NULL, kCGEventLeftMouseUp, b, kCGMouseButtonLeft));
+    return 0;
+  }
   if (argc > 1 && !strcmp(argv[1], "paste")) {
     key(0 /* a */, kCGEventFlagMaskCommand);
     key(9 /* v */, kCGEventFlagMaskCommand);
