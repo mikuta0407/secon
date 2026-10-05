@@ -202,7 +202,7 @@ internal/
   engine/        プロファイルごとの接続ループ・再接続・リスナ、モード (socks / nic)
   api/           Unix socket 上の HTTP+JSON (サーバ / クライアント, SSE)
   config/  service/
-packaging/       Homebrew formula
+.github/workflows/  CI・Release・Homebrew tap 更新 (formula はワークフローが生成)
 dev/             開発用 VM 環境とテストスクリプト (dev/README.md)
 ```
 

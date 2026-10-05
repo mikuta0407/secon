@@ -1,0 +1,135 @@
+name: Update Homebrew Tap
+
+# 最新の (プレリリースでない) Release を mikuta0407/homebrew-apps の Formula/secon.rb に反映する。
+# Release ワークフローの完了後に動く (release イベントだとアセットのアップロード前に走るため)。
+# 注意: Homebrew は Release のアセットを匿名でダウンロードするので、このリポジトリが
+# private の間は formula を更新してもインストールできない。
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (default: latest non-rc release)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  update-tap:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Resolve tag & detect rc
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag }}"
+          if [ -z "$tag" ]; then
+            tag="$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          if [[ "$tag" =~ -rc\.[0-9]+$ ]]; then
+            echo "is_rc=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$tag is a release candidate; tap will not be updated."
+          else
+            echo "is_rc=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout tap
+        if: steps.meta.outputs.is_rc == 'false'
+        uses: actions/checkout@v4
+        with:
+          repository: mikuta0407/homebrew-apps
+          ref: main
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          path: tap
+
+      - name: Generate formula
+        if: steps.meta.outputs.is_rc == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          repo="${{ github.repository }}"
+          base="https://github.com/${repo}/releases/download/${TAG}"
+          mac_arm="secon-${TAG}-macos-arm64.tar.gz"
+          lin_arm="secon-${TAG}-linux-arm64.tar.gz"
+          lin_x64="secon-${TAG}-linux-amd64.tar.gz"
+          tmp="$(mktemp -d)"
+          for a in "$mac_arm" "$lin_arm" "$lin_x64"; do
+            gh release download "$TAG" --repo "$repo" --pattern "$a" --dir "$tmp"
+          done
+          sha_mac_arm=$(sha256sum "$tmp/$mac_arm" | cut -d' ' -f1)
+          sha_lin_arm=$(sha256sum "$tmp/$lin_arm" | cut -d' ' -f1)
+          sha_lin_x64=$(sha256sum "$tmp/$lin_x64" | cut -d' ' -f1)
+          mkdir -p tap/Formula
+          cat > tap/Formula/secon.rb <<EOF
+          class Secon < Formula
+            desc "SoftEther VPN compatible client with virtual NIC and SOCKS5 modes"
+            homepage "https://github.com/${repo}"
+            version "${VERSION}"
+            license "Apache-2.0"
+
+            on_macos do
+              on_arm do
+                url "${base}/${mac_arm}"
+                sha256 "${sha_mac_arm}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "${base}/${lin_arm}"
+                sha256 "${sha_lin_arm}"
+              end
+              on_intel do
+                url "${base}/${lin_x64}"
+                sha256 "${sha_lin_x64}"
+              end
+            end
+
+            def install
+              bin.install "secon"
+              bin.install "secon-gui" if OS.mac?
+              doc.install "LICENSE", "NOTICE", "README.md", "README.ja.md"
+            end
+
+            def caveats
+              <<~CAVEATS
+                Register the daemon (the virtual NIC mode needs root):
+                  sudo #{opt_bin}/secon service install
+                Then add a profile with secon-gui (macOS) or /etc/secon/config.toml, and run:
+                  secon reload
+                SOCKS mode only, without root:
+                  #{opt_bin}/secon service install --user
+              CAVEATS
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/secon version")
+            end
+          end
+          EOF
+          ruby -c tap/Formula/secon.rb
+
+      - name: Commit & push to tap
+        if: steps.meta.outputs.is_rc == 'false'
+        working-directory: tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/secon.rb
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "secon ${{ steps.meta.outputs.version }}"
+            git push
+          fi

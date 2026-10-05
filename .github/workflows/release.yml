@@ -1,0 +1,112 @@
+name: Release
+
+# v* タグの push (または手動実行) で macOS (arm64) / Linux (amd64, arm64) の
+# バイナリを作り GitHub Release に公開する。-rc.N で終わるタグはプレリリース。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # GUI は cgo (Cocoa / OpenGL) が必要なので macOS ランナーでビルドする
+          - name: macos-arm64
+            os: macos-14
+            goos: darwin
+            goarch: arm64
+            gui: true
+          # Linux は CLI のみ (GUI は配布先の X11 / OpenGL に依存するためソースからビルド)
+          - name: linux-amd64
+            os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - name: linux-arm64
+            os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          mkdir -p out
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${tag#v}" -o out/secon ./cmd/secon
+          if [ "${{ matrix.gui }}" = "true" ]; then
+            CGO_ENABLED=1 go build -trimpath -ldflags "-s -w" -o out/secon-gui ./cmd/secon-gui
+          fi
+          ./out/secon version || true
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          asset="secon-${tag}-${{ matrix.name }}.tar.gz"
+          cp LICENSE NOTICE README.md README.ja.md out/
+          tar -czf "$asset" -C out .
+          tar -tzf "$asset"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ steps.package.outputs.asset }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Release flags
+        id: relflags
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          if [[ "$tag" =~ -rc\.[0-9]+$ ]]; then
+            echo "prerelease=true"  >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "make_latest=true"  >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: dist/**/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          prerelease: ${{ steps.relflags.outputs.prerelease }}
+          make_latest: ${{ steps.relflags.outputs.make_latest }}
