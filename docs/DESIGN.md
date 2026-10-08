@@ -149,6 +149,7 @@ secon debug dump|socks         # 開発用: デーモンを介さず直接接続
 - **Fyne** を採用 (`desktop.App.SetSystemTrayMenu` でトレイ、設定画面も同じツールキット)
 - メニュー: プロファイルごとに 接続/切断、状態表示、「設定…」。状態は SSE (`/v1/events`) で即時反映
 - 設定画面はデーモンの `/v1/config/profiles` で読み書き (デーモンが設定ファイルを書き換えて反映。コメントは消える)
+- デーモンの停止は `/v1/shutdown`。デーモンが自分で launchd / systemd の登録を外す (KeepAlive / Restart で起動し直されないように。登録ファイルは残すので次回ログイン・起動時には動く)。起動はユーザデーモンならそのまま、システムデーモンは管理者認証 (macOS: osascript、Linux: pkexec)
 - Linux のトレイは StatusNotifierItem 対応のパネルが必要 (GNOME は AppIndicator 拡張)
 - 注意: Fyne は OpenGL が必要なため macOS VM (Virtualization.framework) では起動しない
 

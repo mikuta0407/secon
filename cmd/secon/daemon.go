@@ -17,6 +17,7 @@ import (
 	"github.com/mikuta0407/secon/internal/engine"
 	"github.com/mikuta0407/secon/internal/i18n"
 	"github.com/mikuta0407/secon/internal/nic"
+	"github.com/mikuta0407/secon/internal/service"
 )
 
 func runDaemon(args []string) error {
@@ -59,7 +60,10 @@ func runDaemon(args []string) error {
 	store := &configStore{path: *cfgPath, cfg: cfg, m: m}
 	m.Apply(cfg)
 
-	srv := &api.Server{Manager: m, Store: store, Reload: store.reload}
+	quit := make(chan struct{})
+	var once sync.Once
+	shutdown := func() { once.Do(func() { stopDaemon(quit) }) }
+	srv := &api.Server{Manager: m, Store: store, Reload: store.reload, Shutdown: shutdown}
 	go func() {
 		if err := srv.Serve(ln); err != nil {
 			log.Printf("api: %v", err)
@@ -76,12 +80,29 @@ func runDaemon(args []string) error {
 		case <-ctx.Done():
 			log.Printf("shutting down")
 			return nil
+		case <-quit:
+			log.Printf("shutting down (requested via API)")
+			return nil
 		case <-hup:
 			if err := srv.Reload(); err != nil {
 				log.Printf("reload: %v", err)
 			}
 		}
 	}
+}
+
+// stopDaemon は API からの停止要求を処理する。launchd / systemd 管理下ならそちらに止めてもらい
+// (自分で終了すると KeepAlive / Restart で起動し直される)、そうでなければ quit を閉じて終了する。
+func stopDaemon(quit chan struct{}) {
+	if service.Managed() {
+		err := service.StopSelf(os.Geteuid() != 0)
+		if err == nil {
+			log.Printf("stop requested via API; asking the service manager to stop")
+			return
+		}
+		log.Printf("stop via service manager: %v (exiting instead)", err)
+	}
+	close(quit)
 }
 
 // configStore は設定ファイルとデーモンの状態を同期させる。

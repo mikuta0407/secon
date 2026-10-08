@@ -46,6 +46,7 @@ Without the GUI, edit `/etc/secon/config.toml` in step 3 (see [Configuration](#c
 
 - macOS: `secon.app` in `/Applications` (installed by the Homebrew Cask). Open it from Launchpad or Finder; it opens the connection manager. Opening it again while it runs brings the connection manager back.
 - Start at login: tray menu → **Start at Login** (macOS: a LaunchAgent; Linux: `~/.config/autostart`). At login it stays in the tray without opening a window.
+- Quit: **Quit** closes only the GUI; the daemon and its connections keep running. The tray also has **Stop Daemon** / **Start Daemon** and **Quit and Stop Daemon**. A stopped daemon runs again at the next login (system daemon: next boot). Starting the system daemon asks for an administrator password.
 - Linux: build it from source (see [Development](#development)). The tray needs a StatusNotifierItem host (on GNOME: the AppIndicator extension). To list it in the app menu: `install -Dm644 packaging/linux/secon-gui.desktop ~/.local/share/applications/secon-gui.desktop` and `install -Dm644 packaging/linux/secon.png ~/.local/share/icons/hicolor/256x256/apps/secon.png`.
 - Language: English or Japanese, chosen from the OS language. Change it from the tray menu: **Language / 言語** → Automatic / English / 日本語.
 

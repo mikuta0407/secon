@@ -25,10 +25,11 @@ type Store interface {
 
 // Server は制御 API サーバ。
 type Server struct {
-	Manager *engine.Manager
-	Store   Store
-	Reload  func() error // 設定ファイルの再読み込み
-	srv     *http.Server
+	Manager  *engine.Manager
+	Store    Store
+	Reload   func() error // 設定ファイルの再読み込み
+	Shutdown func()       // デーモンを止める (応答を返した後に呼ぶ)
+	srv      *http.Server
 }
 
 // Listen はソケットを作成する。group が空でなく root 実行なら、そのグループに操作を許可する。
@@ -74,6 +75,7 @@ func (s *Server) Serve(ln net.Listener) error {
 	mux.HandleFunc("POST /v1/profiles/{name}/connect", s.connect)
 	mux.HandleFunc("POST /v1/profiles/{name}/disconnect", s.disconnect)
 	mux.HandleFunc("POST /v1/reload", s.reload)
+	mux.HandleFunc("POST /v1/shutdown", s.shutdown)
 	mux.HandleFunc("GET /v1/events", s.events)
 	mux.HandleFunc("GET /v1/config/profiles", s.listProfiles)
 	mux.HandleFunc("POST /v1/config/profiles", s.putProfile)
@@ -134,6 +136,15 @@ func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
+}
+
+func (s *Server) shutdown(w http.ResponseWriter, r *http.Request) {
+	if s.Shutdown == nil {
+		writeJSON(w, http.StatusNotImplemented, errorBody{"shutdown is not supported"})
+		return
+	}
+	writeJSON(w, http.StatusOK, struct{}{})
+	go s.Shutdown()
 }
 
 func (s *Server) listProfiles(w http.ResponseWriter, r *http.Request) {

@@ -1,9 +1,12 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const unitName = "secon.service"
@@ -74,4 +77,43 @@ func Uninstall(o Options) (string, error) {
 		return "", err
 	}
 	return path, systemctl(o.User, "daemon-reload")
+}
+
+// Installed は登録済み (ユニットファイルがある) かを返す。
+func Installed(user bool) bool {
+	_, err := os.Stat(unitPath(user))
+	return err == nil
+}
+
+// Start は登録済みのデーモンを起動する。
+func Start(user bool) error { return systemctl(user, "start", unitName) }
+
+// Managed はこのプロセスが systemd のユニット (secon.service) として動いているかを返す。
+func Managed() bool {
+	b, _ := os.ReadFile("/proc/self/cgroup")
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasSuffix(line, "/"+unitName) {
+			return true
+		}
+	}
+	return false
+}
+
+// StopSelf は systemd に自分を止めてもらう (Restart=always で起動し直されないように)。
+// 有効化は残すので次回起動時には動く。完了を待つと自分が止められて戻れないので --no-block にする。
+func StopSelf(user bool) error {
+	return systemctl(user, "--no-block", "stop", unitName)
+}
+
+// StartSystem はシステムデーモンを pkexec の認証付きで起動する (prompt は使わない)。
+func StartSystem(prompt string) error {
+	out, err := exec.Command("pkexec", "systemctl", "start", unitName).CombinedOutput()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 126 { // 認証ダイアログが閉じられた
+		return ErrCanceled
+	}
+	if err != nil {
+		return fmt.Errorf("pkexec systemctl start: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

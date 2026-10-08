@@ -8,3 +8,8 @@ var errUnsupported = errors.New("service management is not supported on this pla
 
 func Install(o Options) (string, error)   { return "", errUnsupported }
 func Uninstall(o Options) (string, error) { return "", errUnsupported }
+func Installed(user bool) bool            { return false }
+func Start(user bool) error               { return errUnsupported }
+func Managed() bool                       { return false }
+func StopSelf(user bool) error            { return errUnsupported }
+func StartSystem(prompt string) error     { return errUnsupported }

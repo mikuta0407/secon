@@ -46,6 +46,7 @@ GUI を使わない場合は、手順 3 で `/etc/secon/config.toml` を編集�
 
 - macOS: `/Applications` の `secon.app`（Homebrew Cask で入ります）。Launchpad や Finder から開くと接続マネージャが開きます。起動中にもう一度開くと接続マネージャが前面に出ます
 - ログイン時に起動: トレイメニュー → **ログイン時に起動**（macOS は LaunchAgent、Linux は `~/.config/autostart`）。ログイン時はウィンドウを出さずトレイに常駐します
+- 終了: **終了** は GUI だけを閉じます（デーモンと接続は残ります）。トレイの **デーモンを停止** / **デーモンを起動** と **デーモンも止めて終了** でデーモンも操作できます。止めたデーモンは次回ログイン（システムデーモンは次回起動）時にまた動きます。システムデーモンの起動には管理者パスワードが要ります
 - Linux: ソースからビルドします（[開発](#開発)）。トレイの表示には StatusNotifierItem 対応のパネルが必要です（GNOME なら AppIndicator 拡張）。アプリ一覧に出すには `install -Dm644 packaging/linux/secon-gui.desktop ~/.local/share/applications/secon-gui.desktop` と `install -Dm644 packaging/linux/secon.png ~/.local/share/icons/hicolor/256x256/apps/secon.png`
 - 表示言語: OS の言語に合わせて英語 / 日本語。トレイの **Language / 言語** → 自動 / English / 日本語 で切り替えられます
 

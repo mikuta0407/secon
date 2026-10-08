@@ -2,6 +2,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,9 @@ import (
 
 // Label は launchd のラベル / systemd のユニット名。
 const Label = "io.github.mikuta0407.secon"
+
+// ErrCanceled は管理者認証がキャンセルされたことを表す。
+var ErrCanceled = errors.New("canceled")
 
 // Options は登録内容。
 type Options struct {

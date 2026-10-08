@@ -91,6 +91,11 @@ func (c *Client) Reload(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/v1/reload", nil)
 }
 
+// Shutdown はデーモンを止める (launchd / systemd に登録されていれば、次回起動時まで起動し直されない)。
+func (c *Client) Shutdown(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/v1/shutdown", nil)
+}
+
 func (c *Client) dialError(err error) error {
 	switch {
 	case errors.Is(err, fs.ErrPermission):

@@ -42,6 +42,7 @@ type gui struct {
 	seq       uint64 // イベントを受け取るたびに増える (ポーリング結果が古くないかの判定用)
 	traySig   string // 最後に描いたトレイの内容 (変化が無ければ作り直さない)
 	opening   map[string]bool
+	daemonOp  bool // デーモンの起動・停止を実行中 (その間は操作項目を無効にする)
 	manager   *managerWindow
 	editors   map[string]*profileEditor // 接続設定名 → 開いているプロパティウィンドウ (新規は含まない)
 	newEditor []*profileEditor
@@ -75,7 +76,7 @@ func main() {
 	if !ok {
 		log.Fatal("system tray is not supported on this platform")
 	}
-	g := &gui{app: a, desk: desk, client: api.NewClient(api.ClientSocket()), menu: fyne.NewMenu("secon"), poll: make(chan struct{}, 1), editors: map[string]*profileEditor{}, opening: map[string]bool{}}
+	g := &gui{app: a, desk: desk, client: api.NewClient(daemonSocket()), menu: fyne.NewMenu("secon"), poll: make(chan struct{}, 1), editors: map[string]*profileEditor{}, opening: map[string]bool{}}
 	// 起動中にアプリをもう一度開いた (Launchpad 等) / 別の secon-gui が起動された → 接続マネージャを出す
 	onReopen = func() { fyne.Do(g.openManager) }
 	if instance != nil {
@@ -212,7 +213,7 @@ func (g *gui) notifyChanges(next []engine.Status) {
 // (作り直すと開いているメニューが閉じたりちらついたりする)。
 func (g *gui) traySignature() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s|%v|%v|", i18n.Current(), g.daemonErr, autostartEnabled())
+	fmt.Fprintf(&b, "%s|%v|%v|%v|%v|", i18n.Current(), g.daemonErr, autostartEnabled(), g.daemonKind(), g.daemonOp)
 	if g.daemonErr == nil {
 		for _, s := range g.status {
 			fmt.Fprintf(&b, "%s/%s/%s/%s/%s/%v/%s;", s.Name, s.State, s.Mode, s.Address, s.Socks, s.Forwards, s.Error)
@@ -254,8 +255,6 @@ func (g *gui) render() {
 		items = append(items, it)
 	}
 
-	quit := fyne.NewMenuItem(i18n.T("tray.quit"), g.app.Quit)
-	quit.IsQuit = true
 	lang := fyne.NewMenuItem(i18n.T("tray.language"), nil)
 	lang.ChildMenu = g.languageMenu()
 	auto := fyne.NewMenuItem(i18n.T("tray.autostart"), g.toggleAutostart)
@@ -265,8 +264,31 @@ func (g *gui) render() {
 		fyne.NewMenuItem(i18n.T("tray.manager"), g.openManager),
 		auto,
 		lang,
-		quit,
 	)
+	// Fyne は最後の項目が IsQuit でないと「Quit」を勝手に足すので、GUI だけの終了を最後に置く
+	quit := fyne.NewMenuItem(i18n.T("tray.quit"), g.app.Quit)
+	quit.IsQuit = true
+	if kind := g.daemonKind(); kind != daemonNone {
+		running := g.daemonErr == nil
+		var toggle *fyne.MenuItem
+		switch {
+		case running:
+			toggle = fyne.NewMenuItem(i18n.T("tray.daemonStop"), func() { g.stopDaemon(false) })
+		case kind == daemonSystem: // 認証ダイアログが出るので「…」付き
+			toggle = fyne.NewMenuItem(i18n.T("tray.daemonStartAuth"), g.startDaemon)
+		default:
+			toggle = fyne.NewMenuItem(i18n.T("tray.daemonStart"), g.startDaemon)
+		}
+		toggle.Disabled = g.daemonOp
+		items = append(items, fyne.NewMenuItemSeparator(), toggle)
+		if running {
+			all := fyne.NewMenuItem(i18n.T("tray.quitAll"), func() { g.stopDaemon(true) })
+			all.Disabled = g.daemonOp
+			quit.Label = i18n.T("tray.quitKeep")
+			items = append(items, all)
+		}
+	}
+	items = append(items, quit)
 	g.menu.Items = items
 	g.desk.SetSystemTrayMenu(g.menu)
 	if connected {
