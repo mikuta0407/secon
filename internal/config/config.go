@@ -41,6 +41,7 @@ type Profile struct {
 	Hub      string `toml:"hub" json:"hub"`
 	User     string `toml:"user" json:"user"`
 	Password string `toml:"password,omitempty" json:"password,omitempty"` // 空なら匿名認証
+	Auth     string `toml:"auth,omitempty" json:"auth,omitempty"`         // "plain" = plain password auth (RADIUS / NT Domain)
 	// PasswordSet は API 専用 (ファイルには書かない)。GET ではパスワードを返さずこれを true にし、
 	// PUT で Password が空かつ true なら保存済みのパスワードを引き継ぐ
 	PasswordSet bool   `toml:"-" json:"password_set,omitempty"`
@@ -217,6 +218,14 @@ func (p *Profile) Normalize() error {
 	case ModeSocks, ModeNIC:
 	default:
 		return i18n.Errorf("cfg.unknownMode", p.Mode)
+	}
+	switch strings.ToLower(strings.TrimSpace(p.Auth)) {
+	case "", "password":
+		p.Auth = "" // default: hashed password auth
+	case "plain":
+		p.Auth = "plain" // RADIUS / NT Domain auth (plain password)
+	default:
+		return i18n.Errorf("cfg.unknownAuth", p.Auth)
 	}
 	p.CertSHA256 = strings.ToLower(strings.ReplaceAll(p.CertSHA256, ":", ""))
 	if p.Proxy != "" {

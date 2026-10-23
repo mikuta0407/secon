@@ -11,6 +11,7 @@ var messages = map[string][2]string{
 	"cfg.hubRequired":            {"enter a virtual hub", "仮想 HUB を入力してください"},
 	"cfg.userRequired":           {"enter a user name", "ユーザ名を入力してください"},
 	"cfg.unknownMode":            {"unknown mode %q (nic or socks)", "モード %q は不明です (nic または socks)"},
+	"cfg.unknownAuth":            {"unknown auth %q (password or plain)", "認証方式 %q は不明です (password または plain)"},
 	"cfg.invalidProxy":           {"invalid HTTP proxy %q (http://host:port)", "HTTP Proxy の形式が不正です: %q (http://host:port)"},
 	"cfg.invalidRoute":           {"invalid route %q (IPv4, e.g. 10.0.0.0/8)", "経路の形式が不正です: %q (IPv4。例 10.0.0.0/8)"},
 	"cfg.invalidForwardListen":   {"invalid port forward listen address %q (e.g. 127.0.0.1:13389)", "ポート転送の待受アドレスが不正です: %q (例 127.0.0.1:13389)"},

@@ -37,7 +37,7 @@ func runDebug(args []string) error {
 // connFlags は接続に関する共通フラグ。
 type connFlags struct {
 	server, hub, user, pass, proxy *string
-	insecure                       *bool
+	insecure, plain                *bool
 }
 
 func addConnFlags(fs *flag.FlagSet) *connFlags {
@@ -48,6 +48,7 @@ func addConnFlags(fs *flag.FlagSet) *connFlags {
 		pass:     fs.String("pass", "", "パスワード (空なら匿名認証)"),
 		proxy:    fs.String("proxy", "", "HTTP プロキシ URL"),
 		insecure: fs.Bool("insecure", false, "サーバ証明書を検証しない"),
+		plain:    fs.Bool("plain", false, "plain password auth (RADIUS / NT Domain)"),
 	}
 }
 
@@ -69,6 +70,8 @@ func (cf *connFlags) connect(ctx context.Context) (*proto.Session, error) {
 	login := proto.LoginConfig{Hub: *cf.hub, Username: *cf.user, Password: *cf.pass, AuthType: proto.AuthPassword}
 	if *cf.pass == "" {
 		login.AuthType = proto.AuthAnonymous
+	} else if *cf.plain {
+		login.AuthType = proto.AuthPlainPassword
 	}
 	sess, hello, err := proto.Handshake(conn, login)
 	if err != nil {

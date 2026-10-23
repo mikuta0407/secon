@@ -238,7 +238,22 @@ func (n *Net) apply(l *l2.Lease) error {
 	}
 	subnet, _ := tcpip.NewSubnet(tcpip.AddrFrom4(l.IP.Masked().Addr().As4()), tcpip.MaskFromBytes(net.CIDRMask(l.IP.Bits(), 32)))
 	routes := []tcpip.Route{{Destination: subnet, NIC: nicID}}
-	if l.Router.IsValid() {
+	for _, r := range l.Routes {
+		if !r.Prefix.IsValid() || !r.Gateway.IsValid() || r.Gateway.IsUnspecified() {
+			continue
+		}
+		dst, err := tcpip.NewSubnet(
+			tcpip.AddrFrom4(r.Prefix.Masked().Addr().As4()),
+			tcpip.MaskFromBytes(net.CIDRMask(r.Prefix.Bits(), 32)),
+		)
+		if err != nil {
+			continue
+		}
+		routes = append(routes, tcpip.Route{Destination: dst, Gateway: tcpip.AddrFrom4(r.Gateway.As4()), NIC: nicID})
+	}
+	// Only fall back to a default route when DHCP provided no explicit routes
+	// at all (option 3, or a static configuration).
+	if len(l.Routes) == 0 && l.Router.IsValid() && !l.Router.IsUnspecified() {
 		routes = append(routes, tcpip.Route{Destination: header.IPv4EmptySubnet, Gateway: tcpip.AddrFrom4(l.Router.As4()), NIC: nicID})
 	}
 	n.st.SetRouteTable(routes)

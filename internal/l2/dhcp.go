@@ -13,10 +13,17 @@ import (
 	"github.com/insomniacslk/dhcp/dhcpv4"
 )
 
+// Route is a route announced by DHCP (RFC 3442 option 121).
+type Route struct {
+	Prefix  netip.Prefix
+	Gateway netip.Addr
+}
+
 // Lease は DHCP で得た設定。
 type Lease struct {
 	IP        netip.Prefix
 	Router    netip.Addr
+	Routes    []Route // RFC 3442 routes (empty when only option 3 was used)
 	DNS       []netip.Addr
 	Domain    string     // ドメイン名 (option 15)
 	Server    netip.Addr // DHCP サーバ ID
@@ -135,7 +142,8 @@ func (c *DHCPClient) modifiers() []dhcpv4.Modifier {
 		dhcpv4.WithHwAddr(c.mac),
 		dhcpv4.WithBroadcast(true),
 		dhcpv4.WithRequestedOptions(dhcpv4.OptionSubnetMask, dhcpv4.OptionRouter,
-			dhcpv4.OptionDomainNameServer, dhcpv4.OptionInterfaceMTU, dhcpv4.OptionDomainName),
+			dhcpv4.OptionDomainNameServer, dhcpv4.OptionInterfaceMTU, dhcpv4.OptionDomainName,
+			dhcpv4.GenericOptionCode(121)),
 		dhcpv4.WithOption(dhcpv4.OptClientIdentifier(append([]byte{1}, c.mac...))),
 	}
 	if c.hostname != "" {
@@ -198,6 +206,46 @@ func (c *DHCPClient) Release(l *Lease) error {
 	return c.broadcast(m)
 }
 
+// optClasslessStaticRoute is the RFC 3442 Classless Static Route option (121).
+const optClasslessStaticRoute = dhcpv4.GenericOptionCode(121)
+
+// parseClasslessRoutes decodes RFC 3442 option 121.
+// The format is a repeated (width, destination) sequence followed by a 4-byte router.
+func parseClasslessRoutes(b []byte) ([]Route, netip.Addr) {
+	var routes []Route
+	i := 0
+	for len(b)-i > 4 {
+		width := int(b[i])
+		i++
+		if width > 32 {
+			return nil, netip.Addr{}
+		}
+		n := (width + 7) / 8
+		if i+n > len(b)-4 {
+			return nil, netip.Addr{}
+		}
+		octets := make([]byte, 4)
+		copy(octets, b[i:i+n])
+		i += n
+		addr, ok := netip.AddrFromSlice(octets)
+		if !ok {
+			return nil, netip.Addr{}
+		}
+		routes = append(routes, Route{Prefix: netip.PrefixFrom(addr, width)})
+	}
+	if len(b)-i != 4 {
+		return nil, netip.Addr{}
+	}
+	gw, ok := netip.AddrFromSlice(b[i:])
+	if !ok || gw.IsUnspecified() {
+		return nil, netip.Addr{}
+	}
+	for k := range routes {
+		routes[k].Gateway = gw
+	}
+	return routes, gw
+}
+
 func leaseFromAck(ack *dhcpv4.DHCPv4) (*Lease, error) {
 	ip, ok := netip.AddrFromSlice(ack.YourIPAddr.To4())
 	if !ok || ip.IsUnspecified() {
@@ -208,8 +256,14 @@ func leaseFromAck(ack *dhcpv4.DHCPv4) (*Lease, error) {
 		bits, _ = m.Size()
 	}
 	l := &Lease{IP: netip.PrefixFrom(ip, bits), Acquired: time.Now()}
-	if rs := ack.Router(); len(rs) > 0 {
-		l.Router, _ = netip.AddrFromSlice(rs[0].To4())
+	// RFC 3442: ignore option 3 (Router) when option 121 is present.
+	if routes, gw := parseClasslessRoutes(ack.Options.Get(optClasslessStaticRoute)); len(routes) > 0 {
+		l.Routes = routes
+		l.Router = gw
+	} else if rs := ack.Router(); len(rs) > 0 {
+		if a, ok := netip.AddrFromSlice(rs[0].To4()); ok && !a.IsUnspecified() {
+			l.Router = a
+		}
 	}
 	for _, d := range ack.DNS() {
 		if a, ok := netip.AddrFromSlice(d.To4()); ok {

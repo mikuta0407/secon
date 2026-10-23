@@ -220,6 +220,8 @@ func (r *runner) session(ctx context.Context) error {
 	login := proto.LoginConfig{Hub: p.Hub, Username: p.User, Password: p.Password, AuthType: proto.AuthPassword}
 	if p.Password == "" {
 		login.AuthType = proto.AuthAnonymous
+	} else if p.Auth == "plain" {
+		login.AuthType = proto.AuthPlainPassword
 	}
 	sess, hello, err := proto.Handshake(conn, login)
 	if err != nil {

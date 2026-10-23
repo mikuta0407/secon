@@ -15,8 +15,9 @@ import (
 
 // 認証方式 (authtype)
 const (
-	AuthAnonymous = 0
-	AuthPassword  = 1
+	AuthAnonymous     = 0
+	AuthPassword      = 1
+	AuthPlainPassword = 2 // plain password auth for RADIUS / NT Domain
 )
 
 const (
@@ -32,7 +33,7 @@ const (
 type LoginConfig struct {
 	Hub      string
 	Username string
-	Password string // AuthType=AuthPassword のとき
+	Password string // used by AuthPassword and AuthPlainPassword
 	AuthType uint32
 	UniqueID []byte // 20 バイト。nil なら乱数
 }
@@ -146,9 +147,13 @@ func loginPack(cfg LoginConfig, random []byte) *Pack {
 	p.AddStr("hubname", cfg.Hub)
 	p.AddStr("username", cfg.Username)
 	p.AddInt("authtype", cfg.AuthType)
-	if cfg.AuthType == AuthPassword {
+	switch cfg.AuthType {
+	case AuthPassword:
 		sp := SecurePassword(HashPassword(cfg.Username, cfg.Password), random)
 		p.AddData("secure_password", sp[:])
+	case AuthPlainPassword:
+		// RADIUS / NT Domain auth requires sending the plain password to the server
+		p.AddStr("plain_password", cfg.Password)
 	}
 	// use_encrypt=0 だと TLS を外れて平文になるので必ず 1。TCP 1 本で使うため qos/half は 0
 	p.AddInt("use_encrypt", 1)
